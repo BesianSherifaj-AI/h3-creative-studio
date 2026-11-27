@@ -157,6 +157,12 @@ def exercise(page, folder, record=False):
         page.wait_for_function("s=>document.querySelector(s)?.readyState >= 2",arg=selector,timeout=40000)
         if play:
             page.click(play)
+            # The cut may assemble a new film before replacing the single-shot monitor.
+            page.wait_for_function("""selector => {
+                const v = document.querySelector(selector);
+                return v.dataset.film && !v.paused && !v.seeking && v.readyState >= 2;
+            }""", arg=selector, timeout=90000)
+            player.evaluate("v => new Promise(resolve => v.requestVideoFrameCallback(() => resolve(true)))")
         else:
             player.evaluate("v=>v.play()")
         group=folder/("record-"+name)
@@ -262,21 +268,16 @@ def exercise(page, folder, record=False):
     check("document.querySelector('#deliveryPreview').style.objectPosition==='100% 50%'")
     tour_bounds["portrait-crop"] = capture_controls("portrait-crop", {"crop": "#deliveryCrop"})
     (folder / "tour-bounds.json").write_text(json.dumps(tour_bounds, indent=2), encoding="utf-8")
+    if record:
+        export_film(page, folder/'Reframed vertical.mp4', 360, 640, open_dialog=False)
+        page.click('#export')
+        page.select_option('#deliveryPreset', 'vertical')
+        page.click('#deliveryCrop summary')
+        page.locator('#deliveryX').press('End')
     page.click("#resetCrop")
     check("document.querySelector('#deliveryPreview').style.objectPosition==='50% 50%'")
-    # Render a modest companion fixture through the same UI. Preserve the chosen 9:16 framing.
-    page.fill('#ew','360');page.fill('#eh','640')
-    path=folder/'Narrated vertical.mp4';pick_path(page,path)
-    known_jobs=page.evaluate("H3.api('jobs').then(j=>j.editorial.map(t=>t.id))")
-    button("Choose export file").click()
-    deadline=time.monotonic()+120
-    job=None
-    while time.monotonic()<deadline:
-        job=page.evaluate("ids=>H3.api('jobs').then(j=>j.editorial.find(t=>t.name==='Export film' && !ids.includes(t.id)))",known_jobs)
-        if job and job["state"] in ("completed","cancelled","failed"):
-            break
-        time.sleep(.25)
-    assert job and job["state"]=="completed", job
+    path = folder/'Narrated vertical.mp4'
+    export_film(page, path, 360, 640, open_dialog=False)
     with av.open(str(path)) as c:
         v=c.streams.video[0]; assert (v.width,v.height)==(360,640)
         assert c.streams.subtitles[0].codec_context.name=="mov_text"

@@ -69,10 +69,11 @@ def pick_path(page, path):
     page.evaluate("file=>{window.pywebview.api.choose=async()=>file;}", str(path))
 
 
-def export_film(page, output, width, height):
+def export_film(page, output, width, height, *, open_dialog=True):
     # A prior export in the same session can already be completed, even before the new job exists.
     known = page.evaluate("H3.api('jobs').then(j=>j.editorial.map(t=>t.id))")
-    page.click("#export")
+    if open_dialog:
+        page.click("#export")
     page.fill("#ew", str(width))
     page.fill("#eh", str(height))
     pick_path(page, output)

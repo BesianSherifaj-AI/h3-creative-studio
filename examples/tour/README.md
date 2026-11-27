@@ -14,7 +14,7 @@ $executable = (Resolve-Path ".\dist\extracted\H3 Creative Studio\H3 Creative Stu
 python scripts/verify_workshops.py --record --exe $executable --evidence dist/workshops
 ```
 
-The verifier prints its `Workshops-…` run folder. A completed run contains `verified.json`, chapter screenshots, `record-*` player sequences and `tour-bounds.json`. That last file records the visible export controls in the matching screenshots, so the tour shows the selected framing, crop sliders and caption option at their actual positions. The build commands below select the most recent run in the evidence directory.
+The verifier prints its `Workshops-…` run folder. A completed run contains `verified.json`, chapter screenshots, `record-*` player sequences, paired center and reframed portrait exports and `tour-bounds.json`. That last file records the visible export controls in the matching screenshots, so the tour shows the selected framing, crop sliders and caption option at their actual positions. The build commands below select the most recent run in the evidence directory.
 
 ## Build and check the films
 
@@ -29,7 +29,7 @@ python examples/tour/verify.py --output dist/showcase
 
 To rebuild one aspect, pass `--format vertical` or `--format landscape`. To use a different narration set, pass the same `--audio <directory>` to both scripts. Match the nine chapter IDs in the bundled manifest, include the SHA-256 and PCM sample count for each mono WAV, and supply its transcript and word times in seconds.
 
-The verifier decodes every frame and the entire audio track of both MP4s. It checks presentation time, stereo sample count, caption timing and text, and measures integrated loudness and true peak. Review the two contact sheets alongside the finished films.
+The verifier decodes every frame and the entire audio track of both MP4s. It checks presentation time, stereo sample count, caption timing and text, and measures integrated loudness and true peak. It also checks the program picture in every frame of the Edit chapter, which compares two actual Studio exports of the same frames. Review the two contact sheets alongside the finished films.
 
 - `H3-Studio-Tour-landscape.mp4` and `H3-Studio-Tour-vertical.mp4` contain the two finished edits.
 - `H3-Studio-Tour.en.srt` contains the aligned captions. The supplied narration produces 25 cues across 1,060 frames.

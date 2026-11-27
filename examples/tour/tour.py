@@ -33,16 +33,15 @@ ART = {
         ("guide-middle", (475, 232, 967, 444), "Inspect the saved revision"),
         ("guide-last", (475, 232, 967, 444), "Check the last frame")]),
     "film": ("FILM", "Keep the take.", "film-lock", (320, 316, 1080, 709), [
-        ("film-lock", (27, 304, 305, 530), "Lock a selected take"),
-        ("film-lock", (322, 712, 1091, 837), "Open it on the timeline")]),
+        ("film-lock", (33, 368, 303, 455), "Lock a selected take"),
+        ("film-lock", (330, 782, 541, 840), "Open it on the timeline")]),
     "voice": ("NARRATION", "Voice the keeper.", "@breakwater", None, [
         ("voice-script", (475, 214, 960, 421), "Write a character line"),
         ("voice-listen", (476, 259, 962, 595), "Audition the voice"),
         ("voice-mix", (3, 538, 885, 807), "Place it under the cut")]),
     "delivery": ("EDIT", "Reframe the cut.", "edit", (0, 95, 1117, 536), [
         ("voice-mix", (3, 548, 888, 807), "Mix dialogue and score"),
-        ("portrait", "preset", "Choose a vertical delivery"),
-        ("portrait-crop", "crop", "Adjust the crop position"),
+        ("portrait-crop", "crop", "Reframe to 9:16"),
         ("portrait", "captions", "Include timed captions")]),
     "assistant": ("AI CLIENTS", "Review the change.", "@receiver", None, [
         ("assistant-pair", (471, 224, 965, 502), "Choose the client's permission"),
@@ -95,6 +94,19 @@ def chapter_cues(chapter):
     """Group aligned words at natural pauses and keep the author's timing."""
     pending = []
     words = chapter["words"]
+    if "caption_phrases" in chapter:
+        index = 0
+        for phrase in chapter["caption_phrases"]:
+            count = phrase["words"]
+            if count < 1 or index + count > len(words):
+                raise ValueError(f"Invalid caption phrase length in {chapter['id']}.")
+            segment = words[index:index + count]
+            yield (phrase.get("text") or " ".join(w["text"] for w in segment),
+                   segment[0]["start"], segment[-1]["end"])
+            index += count
+        if index != len(words):
+            raise ValueError(f"The caption phrases omit words in {chapter['id']}.")
+        return
     for index, word in enumerate(words):
         pending.append(word)
         remaining = len(words) - index - 1

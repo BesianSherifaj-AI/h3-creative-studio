@@ -10,7 +10,7 @@ import tempfile
 import wave
 
 import av
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps, ImageStat
 
 from tour import ART, AUDIO, CHAPTERS, FPS, MIX_RATE, PLATES, ROOT, SIZES, STEM
 from tour import captions, chapter_cues, frame_count, lead_time, read_audio
@@ -80,7 +80,7 @@ def base_image(chapter, hero, detail, label, vertical):
         text(1185, 344, label, 31)
         draw.line((78, 908, 1842, 908), fill=rule, width=2)
     if chapter == "end":
-        x, y, px = (65, 1755, 28) if vertical else (1185, 803, 25)
+        x, y, px = (65, 1412, 32) if vertical else (1185, 803, 27)
         text(x, y, "github.com/BesianSherifaj-AI/h3-creative-studio", px, muted)
     return image, ink
 
@@ -106,8 +106,12 @@ def capture_inputs(captures):
                 if not (0 <= left < right <= 1440 and 0 <= top < bottom <= 900):
                     raise ValueError(f"Invalid capture rectangle for {shot}.{rect}: {values}")
                 named[shot, rect] = tuple(round(v) for v in values)
-    for shot in ("game-shore", "edit"):
+    for shot, monitor in (("game-shore", (165, 275, 800, 568)), ("edit", (215, 180, 840, 420))):
         stream = [captures / ("record-" + shot) / f"{index:03}.jpg" for index in range(17)]
+        for frame in stream:
+            with Image.open(frame) as capture:
+                if max(ImageStat.Stat(capture.crop(monitor)).stddev) < 10:
+                    raise ValueError(f"The {shot} monitor is blank in recorded frame {frame.name}.")
         images.update(stream)
     for path in images:
         with Image.open(path) as image:
@@ -131,6 +135,25 @@ def original_take(name):
                 raise ValueError(f"Empty video source {name}.mp4")
 
 
+def delivery_pair(captures, size):
+    """Show the two real Studio exports from the same frame of the film."""
+    with av.open(str(captures / "Narrated vertical.mp4")) as center, av.open(str(captures / "Reframed vertical.mp4")) as shifted:
+        for index, (a, b) in enumerate(zip(center.decode(video=0), shifted.decode(video=0))):
+            if a.pts * a.time_base != b.pts * b.time_base:
+                raise ValueError("The exported crops are out of sync.")
+            left, right = a.to_image(), b.to_image()
+            if index == 0 and max(ImageStat.Stat(ImageChops.difference(left, right)).mean) < 8:
+                raise ValueError("The exported before and after crops show the same picture.")
+            pair = Image.new("RGB", size, "#1a2423")
+            draw = ImageDraw.Draw(pair)
+            for column, (picture, label) in enumerate(((left, "Center crop"), (right, "Reframed"))):
+                image = ImageOps.contain(picture, (size[0]//2, size[1]-57), Image.Resampling.LANCZOS)
+                x = (size[0]//2 - image.width)//2 + column * (size[0]//2)
+                pair.paste(image, (x, 0))
+                draw.text((x, size[1]-40), label, font=font(28, True), fill="#f1f3e9", anchor="lt")
+            yield pair
+
+
 def render_chapter(writer, captures, named, chapter, aspect):
     key = chapter["id"]
     _, _, primary, region, details = ART[key]
@@ -143,6 +166,7 @@ def render_chapter(writer, captures, named, chapter, aspect):
         panels.append((fit_panel(photo(captures / (shot + ".jpg")), rect, panel_size), label))
     reel = original_take(primary[1:]) if primary.startswith("@") else None
     recorded = sorted((captures / ("record-" + primary)).glob("*.jpg")) if not reel else []
+    crops = delivery_pair(captures, hero_size) if key == 'delivery' else None
     length = frame_count(chapter)
     cues = list(chapter_cues(chapter))
     lead = float(lead_time(chapter))
@@ -156,7 +180,8 @@ def render_chapter(writer, captures, named, chapter, aspect):
                 still = "image-edited"
             if key == "game" and portion > .68:
                 still = "game-ending"
-            if reel:
+            comparing = crops is not None and step >= 1
+            if reel or comparing:
                 source = frame
             elif recorded and still == primary:
                 source = recorded[min(len(recorded) - 1, frame * 8 // FPS)]
@@ -164,9 +189,12 @@ def render_chapter(writer, captures, named, chapter, aspect):
                 source = captures / (still + ".jpg")
             cache_key = source, step
             if cache_key != previous:
-                picture = next(reel) if reel else photo(source)
-                hero = ImageOps.fit(picture.crop(region) if region else picture, hero_size,
-                                    method=Image.Resampling.LANCZOS)
+                if comparing:
+                    hero = next(crops)
+                else:
+                    picture = next(reel) if reel else photo(source)
+                    hero = ImageOps.fit(picture.crop(region) if region else picture, hero_size,
+                                        method=Image.Resampling.LANCZOS)
                 base, ink = base_image(key, hero, *panels[step], vertical)
                 previous = cache_key
             image = base.copy()
@@ -181,6 +209,8 @@ def render_chapter(writer, captures, named, chapter, aspect):
     finally:
         if reel:
             reel.close()
+        if crops:
+            crops.close()
 
 
 def make_voice(ffmpeg, path, audio, chapters):

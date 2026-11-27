@@ -60,6 +60,18 @@ def inspect_movie(path, aspect, work, chapters, expected, ffmpeg):
     moments = {sum(expected[:i]) + int(length*.43): i for i, length in enumerate(expected)}
     visited = set()
     frames = 0
+    edit_chapter = next(i for i, chapter in enumerate(chapters) if chapter["id"] == "delivery")
+    edit_start = sum(expected[:edit_chapter])
+    edit_end = edit_start + expected[edit_chapter]
+    # Both probe points stay inside live picture before and after the two-up crop comparison.
+    left, right = ((.30,.70) if aspect == "landscape" else (.28,.72))
+    if aspect == "landscape":
+        left, right = (78 + 1068*left) / size[0], (78 + 1068*right) / size[0]
+        top, bottom = (342 + 539*.18) / size[1], (342 + 539*.72) / size[1]
+    else:
+        left, right = (64 + 952*left) / size[0], (64 + 952*right) / size[0]
+        top, bottom = (425 + 535*.18) / size[1], (425 + 535*.72) / size[1]
+    monitor_min = float("inf")
     with av.open(str(path)) as source:
         require(len(source.streams.video) == 1 and len(source.streams.audio) == 1, "Expected a picture and a stereo mix.")
         video, audio = source.streams.video[0], source.streams.audio[0]
@@ -69,6 +81,13 @@ def inspect_movie(path, aspect, work, chapters, expected, ffmpeg):
         for frame in source.decode(video=0):
             require(frame.pts is not None and abs(float(frame.pts*frame.time_base) - frames/FPS) < .0005,
                     f"Unexpected presentation time at frame {frames} in {path.name}")
+            if edit_start <= frames < edit_end:
+                probe = frame.reformat(width=192, height=192, format="gray").to_ndarray()
+                for x in (left, right):
+                    columns = slice(round((x-.025)*192), round((x+.025)*192))
+                    detail = float(probe[round(top*192):round(bottom*192), columns].std())
+                    require(detail > 5, f"Blank Edit picture in {path.name} at frame {frames}")
+                    monitor_min = min(monitor_min, detail)
             chapter = moments.get(frames)
             if chapter is not None:
                 visited.add(chapter)
@@ -116,7 +135,7 @@ def inspect_movie(path, aspect, work, chapters, expected, ffmpeg):
     lufs, peak = loudness(ffmpeg, path)
     sheet.save(work / f"review-{aspect}.jpg", quality=92)
     return {"size": size, "frames":frames, "seconds":frames/FPS, "audio_samples":samples, "declared_audio_samples":declared_samples, "audio_timing":timing,
-            "lufs":lufs, "true_peak":peak, "sha256":sha256(path)}
+            "lufs":lufs, "true_peak":peak, "edit_picture_check":{"first":edit_start,"last":edit_end-1,"minimum_luma_stddev":round(monitor_min,2)}, "sha256":sha256(path)}
 
 
 def main():

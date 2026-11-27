@@ -114,5 +114,6 @@ jobs:
             !dist/workshops/Workshops-*/failure.jpg
             dist/workshops/Workshops-*/record-*/*.jpg
             dist/workshops/Workshops-*/Narrated vertical.mp4
+            dist/workshops/Workshops-*/Reframed vertical.mp4
             dist/workshops/Workshops-*/Ending narration.mp4
           retention-days: 3

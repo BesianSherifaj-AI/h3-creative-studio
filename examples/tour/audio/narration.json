@@ -447,6 +447,14 @@
           "start": 3.0,
           "end": 3.3
         }
+      ],
+      "caption_phrases": [
+        {
+          "words": 8
+        },
+        {
+          "words": 6
+        }
       ]
     },
     {
@@ -771,6 +779,15 @@
           "text": "GitHub.",
           "start": 4.0693,
           "end": 4.3893
+        }
+      ],
+      "caption_phrases": [
+        {
+          "words": 5
+        },
+        {
+          "words": 7,
+          "text": "H3 Creative Studio is on GitHub."
         }
       ]
     }
