@@ -10,7 +10,22 @@ docs/AI-clients.md
 docs/Edit.jpg
 docs/Motion.jpg
 docs/Narration.md
+docs/PLAYABLE_STORIES.md
 docs/Tour.jpg
+examples/tour/README.md
+examples/tour/audio/assistant.wav
+examples/tour/audio/delivery.wav
+examples/tour/audio/end.wav
+examples/tour/audio/film.wav
+examples/tour/audio/game.wav
+examples/tour/audio/image.wav
+examples/tour/audio/motion.wav
+examples/tour/audio/narration.json
+examples/tour/audio/opening.wav
+examples/tour/audio/voice.wav
+examples/tour/build.py
+examples/tour/tour.py
+examples/tour/verify.py
 h3studio/__init__.py
 h3studio/agent_cli.py
 h3studio/application.py
@@ -25,6 +40,7 @@ h3studio/editor.py
 h3studio/engine_controls.py
 h3studio/finish_worker.py
 h3studio/game.py
+h3studio/game_share.py
 h3studio/game_story.py
 h3studio/generation.py
 h3studio/image_director.py
@@ -55,6 +71,7 @@ h3studio/starter/receiver-grade.png
 h3studio/starter/receiver.jpg
 h3studio/starter/receiver.mp4
 h3studio/starter/title.png
+h3studio/story_player.html
 h3studio/voice-sapi.ps1
 h3studio/voice.py
 h3studio/web/assistant-bridge.js
@@ -112,6 +129,7 @@ tests/test_cut.py
 tests/test_desktop_service.py
 tests/test_director.py
 tests/test_game.py
+tests/test_game_share.py
 tests/test_game_story.py
 tests/test_generation.py
 tests/test_image_director.py

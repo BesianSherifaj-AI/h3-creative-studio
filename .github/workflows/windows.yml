@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   windows:
-    runs-on: windows-2025
+    runs-on: windows-2022
     timeout-minutes: 40
     env:
       PYTHONUTF8: '1'
@@ -51,6 +51,15 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 3
+      - name: Identify the hosted WebView2 runtime
+        if: github.event_name != 'pull_request'
+        run: |
+          $base = [Environment]::GetFolderPath('ProgramFilesX86')
+          $runtime = Join-Path $base 'Microsoft/EdgeWebView/Application/*/msedgewebview2.exe'
+          Get-Item -Path $runtime -ErrorAction Stop | ForEach-Object { $_.VersionInfo.ProductVersion }
+          Get-Process -Id $PID | Select-Object ProcessName,SessionId
+          Get-Service Audiosrv,AudioEndpointBuilder | Select-Object Name,Status
+          Get-ChildItem 'HKLM:/SOFTWARE/Microsoft/Speech/Voices/Tokens' -ErrorAction SilentlyContinue | Select-Object PSChildName
       - name: Launch extracted Studio and verify Film, Game and editing
         if: github.event_name != 'pull_request'
         run: |
@@ -60,6 +69,25 @@ jobs:
       - name: Verify narration, assistants, editable examples and delivery
         if: github.event_name != 'pull_request'
         run: python scripts/verify_workshops.py --record --exe "dist/extracted/H3 Creative Studio/H3 Creative Studio.exe" --evidence dist/workshops
+      - name: Build and decode the two product tours
+        if: github.event_name != 'pull_request'
+        run: |
+          $captures = (Get-ChildItem -Directory dist/workshops/Workshops-*).FullName
+          python examples/tour/build.py --captures $captures --output dist/showcase
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python examples/tour/verify.py --output dist/showcase
+      - name: Save verified community films
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: product-tours
+          path: |
+            dist/showcase/H3-Studio-Tour*.mp4
+            dist/showcase/H3-Studio-Tour.en.srt
+            dist/showcase/tour-verified.json
+            dist/showcase/review-*.jpg
+          if-no-files-found: error
+          retention-days: 3
       - name: Save test results
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
@@ -68,9 +96,14 @@ jobs:
           path: |
             dist/source-tests.xml
             dist/community/Studio-*/verification.json
+            dist/community/Studio-*/home/desktop.log
+            dist/workshops/Workshops-*/home/desktop.log
             dist/workshops/Workshops-*/verified.json
+            dist/workshops/Workshops-*/tour-bounds.json
+            dist/workshops/Workshops-*/Tidal-Relay.html
             dist/workshops/Workshops-*/*.jpg
             !dist/workshops/Workshops-*/failure.jpg
             dist/workshops/Workshops-*/record-*/*.jpg
             dist/workshops/Workshops-*/Narrated vertical.mp4
+            dist/workshops/Workshops-*/Ending narration.mp4
           retention-days: 3

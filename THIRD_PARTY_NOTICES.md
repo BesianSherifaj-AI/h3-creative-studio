@@ -16,3 +16,5 @@ ComfyUI and installed custom nodes run as separate processes. LM Studio serves D
 The Barlow Semi Condensed font is distributed under the SIL Open Font License in [fonts/OFL.txt](h3studio/web/fonts/OFL.txt). The bundled Lucide icon paths use the licences in [icons-LICENSE.txt](h3studio/web/icons-LICENSE.txt). Tidal Relay contains original bundled example media. See the [starter credits](h3studio/starter/README.md). The SAM 3.1 and SeedVR2 still-image graph builders adapt Atelier’s `backend/helpers.py` under its included MIT licence.
 
 The optional Visual Director uses the vision planning and review approach from H3 Image Editor. The reworked game controls use the world state validation and action rules from H3 Prompt Studio.
+
+The nine tour voice recordings are original narration synthesized with Kokoro-82M's af_heart voice. The tour source, timing data and media credits are in [the public tour source](https://github.com/BesianSherifaj-AI/h3-creative-studio/tree/v2.1.0/examples/tour).

@@ -8,6 +8,8 @@
 
 In **Edit → Narration**, use an installed Windows voice to record character lines. Add a line to the timeline and include its timed captions in **Export film**. Choose **Vertical** and **Center fill** to reframe your cut for portrait delivery. Drag the picture in the preview to keep a subject in frame. Under **? → Connect an AI client**, copy the MCP configuration to your client. **Queue → Pause AI** holds new AI work and releases idle Studio renderers when you need the machine for gaming.
 
+In **Game**, open **Play Tidal Relay** to try the interactive episode. **Share playable story** exports a single file that opens in a browser offline. **Add branch to Film** puts the route you played on the editable timeline.
+
 **Create desktop shortcut.cmd** creates an optional shortcut to this portable copy. If you move this folder, run that command again.
 
 Projects and preferences default to %LOCALAPPDATA%\H3 Creative Studio. Open existing project folders from the Project menu. For an independent workspace, run the desktop executable with --home and optionally --project.

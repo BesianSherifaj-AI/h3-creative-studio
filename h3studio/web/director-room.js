@@ -180,7 +180,7 @@ window.DirectorRoom=(()=>{
     return '<div class="dr-game-grid"><article class="dr-current"><div class="dr-game-marker"><small>Turn '+path.length+
       (turn.author?' · '+esc(turn.author):'')+'</small>'+(turnId!==data.active_turn?action('resumeGame','Resume this branch'):'<span class="dr-status">Current branch</span>')+'</div>'+
       '<h2>'+esc(turn.action)+'</h2><p class="dr-narration">'+esc(turn.scene)+'</p><div class="dr-actions">'+
-      action('playScene',turn.story_node||turn.author==='Studio example'?'Play Tidal Relay':'Play scene','',true)+action('voiceTurn','Narrate turn')+'</div>'+
+      action('playScene',turn.story_node||turn.author==='Studio example'?'Play Tidal Relay':'Play scene','',true)+action('voiceTurn','Narrate turn')+action('shareStory','Share playable story')+'</div>'+
       (turn.state_changes.length?'<ul class="dr-changes">'+turn.state_changes.map(v=>'<li>'+esc(v)+'</li>').join('')+'</ul>':'')+
       '<div class="dr-move"><h3>Next player action</h3><div class="dr-choices">'+turn.actions.map(v=>action('choice',v,v)).join('')+'</div>'+
       field('Your move','drMove','',true,'rows="2"')+'<div class="dr-actions">'+action('move','Generate next turn','',true)+action('world','World & inventory')+'</div></div></article>'+
@@ -226,7 +226,24 @@ window.DirectorRoom=(()=>{
       (data.ending?action('playBack','Replay from opening',path[0]):'')+'</div>'+
       (points?'<details open><summary>Saved viewpoints</summary><div class="dr-actions">'+points+'</div></details>':'')+
       '<button data-dr="storyFilm">Add branch to Film · '+path.length+' shot'+(path.length===1?'':'s')+'</button>'+
-      (data.node?'<small>Uses the saved location clips for this route.</small>':'')+'</section></aside></div></article>';
+      (data.node?'<small>Uses the saved location clips for this route.</small>':'')+action('shareStory','Share playable story')+'</section></aside></div></article>';
+  }
+  function shareStory(){
+    const turn=turnId,owner=state.doc.id,folder=state.folder,root=lineage(turn)[0],opening=store().turns[root];
+    const relay=opening.story_node==='watch'||opening.author==='Studio example';
+    const hasVoice=Object.values(state.doc.narrations||{}).some(c=>c.source?.turn&&lineage(c.source.turn)[0]===root);
+    const body=note(relay?'Share all six authored routes and the saved branches of this episode.':'Share the played choices and saved turns in this episode.')+
+      note('Readers open one HTML file in a browser. Available scene artwork is included.')+
+      (hasVoice?'<label class="field"><span><input id="drShareVoice" type="checkbox"> Include saved turn narration</span></label>'+
+        note('Uses the latest recording for each turn, up to 2 MB per recording and 6 MB total. Readers choose when to play it.'):'');
+    modal('Share playable story',body,[{label:'Save HTML file',primary:true,run:async()=>{
+      const includeVoice=!!$('#drShareVoice')?.checked;
+      const path=await pick('save',relay?'Tidal Relay.html':'Playable story.html');if(!path)return;
+      if(state.doc.id!==owner||state.folder!==folder)throw Error('Open the original Game project to share it.');
+      const r=await api('director_story_share',{turn,project_id:owner,project_folder:folder,path,include_voice:includeVoice});
+      closeModal();toast('Saved '+r.scenes+' scenes, '+r.images+' images and '+r.voices+' recordings.'+
+        (r.skipped_images||r.skipped_voices?' Omitted '+r.skipped_images+' images and '+r.skipped_voices+' recordings.':''));
+    }}]);
   }
   async function speak(key,board,row,shot){
     let text,title,speaker='Narrator',turn=null,take=null;
@@ -339,6 +356,7 @@ window.DirectorRoom=(()=>{
         if(root)return showPlay(root[0]);break;
       }
       case 'playScene': return showPlay(turnId);
+      case 'shareStory': return shareStory();
       case 'endPlay': playing=null;viewpoint=null;break;
       case 'voiceTurn':case 'voiceBoard':case 'voiceShot': return speak(key,board,row,shot);
       case 'storyChoice':{

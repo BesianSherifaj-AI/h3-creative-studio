@@ -16,6 +16,36 @@ import psutil
 from playwright.sync_api import sync_playwright
 
 
+def connect_desktop(pw, port, launcher, home):
+    """Wait for the packaged window and report the observed process state on startup failure."""
+    deadline = time.monotonic() + 80
+    last_error = "Waiting for the WebView2 debugging port."
+    while launcher.poll() is None and time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=.5):
+                pass
+            browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{port}", timeout=4000)
+            pages = [page for context in browser.contexts for page in context.pages]
+            if pages:
+                return pages[0]
+            last_error = "WebView2 responded before its page was ready."
+        except Exception as error:
+            last_error = str(error).splitlines()[0]
+        time.sleep(.35)
+    processes = []
+    try:
+        parent = psutil.Process(launcher.pid)
+        processes = [(child.name(), child.pid, child.status()) for child in parent.children(recursive=True)]
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        pass
+    log = Path(home)/"desktop.log"
+    diagnostic = dict(launcher_exit=launcher.poll(), launcher_pid=launcher.pid, child_processes=processes,
+                      port=port, last_error=last_error, desktop_log=log.is_file())
+    if log.is_file():
+        diagnostic["startup_log_tail"] = log.read_text(encoding="utf-8", errors="replace")[-2200:]
+    raise RuntimeError("Studio desktop startup failed. " + json.dumps(diagnostic))
+
+
 def close_window(port):
     listeners = {c.pid for c in psutil.net_connections(kind="tcp") if c.laddr.port == port and c.status == psutil.CONN_LISTEN}
     candidates = set()
@@ -244,19 +274,11 @@ def run():
         system_root = Path(os.environ["SystemRoot"])
         env["PATH"] = os.pathsep.join([str(system_root/"System32"), str(system_root)])
     cmd = [str(args.exe.resolve())] if args.exe else [str(root/".venv/Scripts/pythonw.exe"),str(root/"studio.py")]
-    subprocess.Popen([*cmd,"--home",str(evidence/"home")],env=env,cwd=evidence)
+    launcher = subprocess.Popen([*cmd,"--home",str(evidence/"home")],env=env,cwd=evidence)
     errors = []
     try:
         with sync_playwright() as pw:
-            for _ in range(120):
-                try:
-                    browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{port}",timeout=1000)
-                    break
-                except Exception:
-                    time.sleep(.35)
-            else:
-                raise RuntimeError("The desktop window did not open.")
-            page = next(p for ctx in browser.contexts for p in ctx.pages)
+            page = connect_desktop(pw, port, launcher, evidence/"home")
             page.on("pageerror",lambda error:errors.append(str(error)))
             page.wait_for_function("window.H3?.get().doc?.name==='Tidal Relay' && typeof window.pywebview?.api?.choose==='function'")
             try:

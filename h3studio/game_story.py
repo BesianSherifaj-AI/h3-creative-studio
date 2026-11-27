@@ -312,6 +312,9 @@ def _motion_from_view(project,args):
 
 def action(project,op,args):
     from .director import _store
+    if op=="director_story_share":
+        from .game_share import export
+        return export(project,args)
     if op=="director_story_motion": return _motion_from_view(project,args)
     if op=="director_story_view":
         doc=project.state()

@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; media-src data:; style-src 'unsafe-inline'; script-src 'sha256-READER_HASH'; base-uri 'none'; form-action 'none'">
+<title>Playable story · H3 Creative Studio</title>
+<style>
+:root{color-scheme:dark;--ink:#f2f5ed;--dim:#b7c6c5;--sea:#9de0d4;--line:#42575b;font:100%/1.55 Inter,"Segoe UI",sans-serif}
+*{box-sizing:border-box}
+body{margin:0;padding:0 clamp(1rem,5vw,5.5rem);background:#101a1d;color:var(--ink)}
+.sheet{max-width:77rem;margin:auto}
+header,footer,nav{display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+header{border-bottom:1px solid var(--line);padding:1rem 0}
+.episode{font-size:1.1rem;font-weight:650;overflow-wrap:anywhere}
+.kind,.position,footer{color:var(--dim);font-size:.9rem}
+main{display:grid;grid-template-columns:minmax(0,1fr);align-items:start;gap:clamp(1.5rem,4vw,4rem);padding:clamp(1.5rem,5vw,4rem) 0}
+main.with-art{grid-template-columns:minmax(0,1.15fr) minmax(16rem,.9fr)}
+figure{margin:0;position:sticky;top:2rem;overflow:hidden;background:#142227;border-radius:.45rem}
+img{display:block;width:100%;height:auto;max-height:75vh;object-fit:contain}
+article{max-width:46rem}
+h1{margin:.4rem 0 1.1rem;font:500 clamp(2.3rem,5vw,5.4rem)/1.06 Spectral,Georgia,serif;letter-spacing:-.04em}
+h1:focus{outline:none}
+.prose{font:400 clamp(1.08rem,1.65vw,1.38rem)/1.55 Spectral,Georgia,serif;white-space:pre-wrap}
+h1,.prose,button{overflow-wrap:anywhere}
+.choices{display:grid;gap:.6rem;margin:1.4rem 0}
+button{font:inherit;cursor:pointer;background:#1c2c30;color:var(--ink);border:1px solid var(--line);min-height:2.8rem;border-radius:.3rem;padding:.6rem 1rem}
+button:hover:enabled{background:#253d40;border-color:var(--sea)}
+button:focus-visible,audio:focus-visible{outline:3px solid var(--sea);outline-offset:3px}
+button:disabled{opacity:.43;cursor:default}
+.choices button{display:flex;align-items:baseline;gap:.85rem;text-align:left;width:100%}
+kbd{font:600 .8rem Inter,"Segoe UI",sans-serif;color:var(--sea);flex:none}
+audio{margin-top:1rem;width:min(100%,25rem)}
+nav{justify-content:flex-start;margin-top:1.4rem}nav button{background:transparent}
+footer{padding:1rem 0;border-top:1px solid var(--line)}
+[hidden]{display:none!important}
+@media(max-width:760px){main.with-art{grid-template-columns:1fr}figure{position:static}img{max-height:45vh}header{gap:.3rem 1rem}}
+</style>
+</head>
+<body><div class="sheet">
+<header><strong class="episode" id="episode"></strong><span class="kind" id="kind"></span></header>
+<main id="layout">
+  <figure id="picture" hidden><img id="image" alt="Scene artwork"></figure>
+  <article>
+    <span class="position" id="position"></span>
+    <h1 id="heading" tabindex="-1"></h1>
+    <div class="prose" id="prose"></div>
+    <audio id="voice" controls preload="none" aria-label="Saved narration for this scene" hidden></audio>
+    <div id="choices" class="choices" role="group" aria-label="Story choices"></div>
+    <p class="position" id="end"></p>
+    <nav aria-label="Story navigation"><button id="back" type="button">Back one turn</button><button id="replay" type="button">Replay from opening</button></nav>
+  </article>
+</main>
+<footer><span>H3 Creative Studio</span><span>Offline story player</span></footer>
+<noscript>Enable JavaScript in your browser to play this story.</noscript>
+</div>
+<script type="application/json" id="story">EPISODE_JSON</script>
+<script id="reader">
+'use strict';
+const story = JSON.parse(document.getElementById('story').textContent);
+const el = id => document.getElementById(id);
+const trail = [0];
+el('episode').textContent = story.title;
+el('kind').textContent = story.kind;
+document.title = story.title + ' · H3 Creative Studio';
+
+function draw(focus) {
+  const scene = story.scenes[trail[trail.length - 1]];
+  el('episode').hidden = scene.title === story.title;
+  el('heading').textContent = scene.title;
+  el('prose').textContent = scene.text;
+  el('position').textContent = 'Turn ' + trail.length;
+  const image = el('image');
+  el('picture').hidden = scene.art === null;
+  el('layout').classList.toggle('with-art', scene.art !== null);
+  if (scene.art === null) image.removeAttribute('src');
+  else image.src = story.images[scene.art];
+  const voice = el('voice');
+  voice.pause();
+  voice.removeAttribute('src');
+  voice.hidden = scene.voice === null;
+  if (!voice.hidden) voice.src = story.sounds[scene.voice];
+  voice.load();
+  const choices = el('choices');
+  choices.replaceChildren();
+  scene.choices.forEach(([label, next], index) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    if (index < 9) {
+      const number = document.createElement('kbd');
+      number.setAttribute('aria-hidden', 'true');
+      number.textContent = String(index + 1);
+      button.append(number);
+      button.setAttribute('aria-keyshortcuts', String(index + 1));
+    }
+    button.append(document.createTextNode(label));
+    button.onclick = () => { trail.push(next); draw(true); };
+    choices.append(button);
+  });
+  el('end').textContent = choices.childElementCount ? '' :
+    (scene.ending ? 'End of this route.' : 'End of this saved branch.');
+  el('back').disabled = el('replay').disabled = trail.length === 1;
+  if (focus) el('heading').focus();
+}
+el('back').onclick = () => { if (trail.length > 1) { trail.pop(); draw(true); } };
+el('replay').onclick = () => { trail.length = 1; draw(true); };
+document.addEventListener('keydown', event => {
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.repeat ||
+      event.target === el('voice') || !/^[1-9]$/.test(event.key)) return;
+  const button = el('choices').children[Number(event.key) - 1];
+  if (button) { event.preventDefault(); button.click(); }
+});
+draw(false);
+</script>
+</body>
+</html>

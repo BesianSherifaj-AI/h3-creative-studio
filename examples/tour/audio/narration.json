@@ -1,0 +1,778 @@
+{
+  "model": "hexgrad/Kokoro-82M",
+  "voice": "af_heart",
+  "speaking_rate": 1.03,
+  "alignment": "Whisper-medium transcription aligned to the authored script. The ending includes a corrected pronunciation of Tidal.",
+  "chapters": [
+    {
+      "id": "opening",
+      "title": "A signal in the fog",
+      "text": "A signal cuts through the fog. Do you answer the radio, or take the lamp to shore?",
+      "frames": 105824,
+      "sample_rate": 24000,
+      "sha256": "d9017452397e86f0eac2863929ffbcea4c1546e993aca7da3bd67346b76884d4",
+      "words": [
+        {
+          "text": "A",
+          "start": 0.0,
+          "end": 0.24
+        },
+        {
+          "text": "signal",
+          "start": 0.24,
+          "end": 0.54
+        },
+        {
+          "text": "cuts",
+          "start": 0.54,
+          "end": 0.82
+        },
+        {
+          "text": "through",
+          "start": 0.82,
+          "end": 1.06
+        },
+        {
+          "text": "the",
+          "start": 1.06,
+          "end": 1.24
+        },
+        {
+          "text": "fog.",
+          "start": 1.24,
+          "end": 1.48
+        },
+        {
+          "text": "Do",
+          "start": 1.74,
+          "end": 1.86
+        },
+        {
+          "text": "you",
+          "start": 1.86,
+          "end": 2.04
+        },
+        {
+          "text": "answer",
+          "start": 2.04,
+          "end": 2.26
+        },
+        {
+          "text": "the",
+          "start": 2.26,
+          "end": 2.46
+        },
+        {
+          "text": "radio,",
+          "start": 2.46,
+          "end": 2.82
+        },
+        {
+          "text": "or",
+          "start": 2.82,
+          "end": 3.24
+        },
+        {
+          "text": "take",
+          "start": 3.24,
+          "end": 3.5
+        },
+        {
+          "text": "the",
+          "start": 3.5,
+          "end": 3.7
+        },
+        {
+          "text": "lamp",
+          "start": 3.7,
+          "end": 3.82
+        },
+        {
+          "text": "to",
+          "start": 3.82,
+          "end": 4.08
+        },
+        {
+          "text": "shore?",
+          "start": 4.08,
+          "end": 4.22
+        }
+      ]
+    },
+    {
+      "id": "game",
+      "title": "Choose a route",
+      "text": "I took the lamp. I can save this moment, try another ending, or turn my route into a film.",
+      "frames": 133472,
+      "sample_rate": 24000,
+      "sha256": "e7b6b4c00dab210c90db42e98b2c1bea326b3dd530798288679bfa762b6101c9",
+      "words": [
+        {
+          "text": "I",
+          "start": 0.0,
+          "end": 0.22
+        },
+        {
+          "text": "took",
+          "start": 0.22,
+          "end": 0.36
+        },
+        {
+          "text": "the",
+          "start": 0.36,
+          "end": 0.6
+        },
+        {
+          "text": "lamp.",
+          "start": 0.6,
+          "end": 0.82
+        },
+        {
+          "text": "I",
+          "start": 1.1,
+          "end": 1.28
+        },
+        {
+          "text": "can",
+          "start": 1.28,
+          "end": 1.5
+        },
+        {
+          "text": "save",
+          "start": 1.5,
+          "end": 1.78
+        },
+        {
+          "text": "this",
+          "start": 1.78,
+          "end": 1.98
+        },
+        {
+          "text": "moment,",
+          "start": 1.98,
+          "end": 2.34
+        },
+        {
+          "text": "try",
+          "start": 2.66,
+          "end": 2.86
+        },
+        {
+          "text": "another",
+          "start": 2.86,
+          "end": 3.22
+        },
+        {
+          "text": "ending,",
+          "start": 3.22,
+          "end": 3.56
+        },
+        {
+          "text": "or",
+          "start": 3.98,
+          "end": 4.1
+        },
+        {
+          "text": "turn",
+          "start": 4.1,
+          "end": 4.34
+        },
+        {
+          "text": "my",
+          "start": 4.34,
+          "end": 4.6
+        },
+        {
+          "text": "route",
+          "start": 4.6,
+          "end": 4.8
+        },
+        {
+          "text": "into",
+          "start": 4.8,
+          "end": 5.06
+        },
+        {
+          "text": "a",
+          "start": 5.06,
+          "end": 5.26
+        },
+        {
+          "text": "film.",
+          "start": 5.26,
+          "end": 5.46
+        }
+      ]
+    },
+    {
+      "id": "image",
+      "title": "Move one layer",
+      "text": "The station starts as three layers. I can move the title and leave the sky alone.",
+      "frames": 104800,
+      "sample_rate": 24000,
+      "sha256": "9049cfb1d1154ec09a2fed0865c01b3af737c393a7b95bcbb98508245381fcea",
+      "words": [
+        {
+          "text": "The",
+          "start": 0.0,
+          "end": 0.24
+        },
+        {
+          "text": "station",
+          "start": 0.24,
+          "end": 0.58
+        },
+        {
+          "text": "starts",
+          "start": 0.58,
+          "end": 0.92
+        },
+        {
+          "text": "as",
+          "start": 0.92,
+          "end": 1.16
+        },
+        {
+          "text": "three",
+          "start": 1.16,
+          "end": 1.36
+        },
+        {
+          "text": "layers.",
+          "start": 1.36,
+          "end": 1.7
+        },
+        {
+          "text": "I",
+          "start": 1.98,
+          "end": 2.14
+        },
+        {
+          "text": "can",
+          "start": 2.14,
+          "end": 2.28
+        },
+        {
+          "text": "move",
+          "start": 2.28,
+          "end": 2.44
+        },
+        {
+          "text": "the",
+          "start": 2.44,
+          "end": 2.66
+        },
+        {
+          "text": "title",
+          "start": 2.66,
+          "end": 2.88
+        },
+        {
+          "text": "and",
+          "start": 2.88,
+          "end": 3.24
+        },
+        {
+          "text": "leave",
+          "start": 3.24,
+          "end": 3.44
+        },
+        {
+          "text": "the",
+          "start": 3.44,
+          "end": 3.64
+        },
+        {
+          "text": "sky",
+          "start": 3.64,
+          "end": 3.84
+        },
+        {
+          "text": "alone.",
+          "start": 3.84,
+          "end": 4.2
+        }
+      ]
+    },
+    {
+      "id": "motion",
+      "title": "Guide the camera",
+      "text": "These saved images guide the first, middle, and last frame of the shot.",
+      "frames": 94208,
+      "sample_rate": 24000,
+      "sha256": "a4e0e933d10f806917524fd65a38fd12609b537ac18e1bda0fd07a0b8068fd34",
+      "words": [
+        {
+          "text": "These",
+          "start": 0.0,
+          "end": 0.34
+        },
+        {
+          "text": "saved",
+          "start": 0.34,
+          "end": 0.62
+        },
+        {
+          "text": "images",
+          "start": 0.62,
+          "end": 1.08
+        },
+        {
+          "text": "guide",
+          "start": 1.08,
+          "end": 1.44
+        },
+        {
+          "text": "the",
+          "start": 1.44,
+          "end": 1.68
+        },
+        {
+          "text": "first,",
+          "start": 1.68,
+          "end": 1.98
+        },
+        {
+          "text": "middle,",
+          "start": 2.06,
+          "end": 2.38
+        },
+        {
+          "text": "and",
+          "start": 2.66,
+          "end": 2.84
+        },
+        {
+          "text": "last",
+          "start": 2.84,
+          "end": 3.12
+        },
+        {
+          "text": "frame",
+          "start": 3.12,
+          "end": 3.32
+        },
+        {
+          "text": "of",
+          "start": 3.32,
+          "end": 3.48
+        },
+        {
+          "text": "the",
+          "start": 3.48,
+          "end": 3.64
+        },
+        {
+          "text": "shot.",
+          "start": 3.64,
+          "end": 3.82
+        }
+      ]
+    },
+    {
+      "id": "film",
+      "title": "Keep the take",
+      "text": "In Film, I lock the take I want and open it on the timeline.",
+      "frames": 84480,
+      "sample_rate": 24000,
+      "sha256": "bad3452fdc40b5c90bcb7646c61c8b1c72ecfdb6b29e7e50130aafb62f5c1d9b",
+      "words": [
+        {
+          "text": "In",
+          "start": 0.0,
+          "end": 0.28
+        },
+        {
+          "text": "Film,",
+          "start": 0.28,
+          "end": 0.56
+        },
+        {
+          "text": "I",
+          "start": 0.88,
+          "end": 1.04
+        },
+        {
+          "text": "lock",
+          "start": 1.04,
+          "end": 1.16
+        },
+        {
+          "text": "the",
+          "start": 1.16,
+          "end": 1.4
+        },
+        {
+          "text": "take",
+          "start": 1.4,
+          "end": 1.52
+        },
+        {
+          "text": "I",
+          "start": 1.52,
+          "end": 1.76
+        },
+        {
+          "text": "want",
+          "start": 1.76,
+          "end": 1.96
+        },
+        {
+          "text": "and",
+          "start": 1.96,
+          "end": 2.26
+        },
+        {
+          "text": "open",
+          "start": 2.26,
+          "end": 2.48
+        },
+        {
+          "text": "it",
+          "start": 2.48,
+          "end": 2.64
+        },
+        {
+          "text": "on",
+          "start": 2.64,
+          "end": 2.82
+        },
+        {
+          "text": "the",
+          "start": 2.82,
+          "end": 3.0
+        },
+        {
+          "text": "timeline.",
+          "start": 3.0,
+          "end": 3.3
+        }
+      ]
+    },
+    {
+      "id": "voice",
+      "title": "Give the keeper a voice",
+      "text": "I can give the keeper a voice, audition her line, and place it over the cut.",
+      "frames": 95232,
+      "sample_rate": 24000,
+      "sha256": "b94d00940d26616939b439a2db12e5f001f44186e006b5983a8f2584a235331b",
+      "words": [
+        {
+          "text": "I",
+          "start": 0.0,
+          "end": 0.18
+        },
+        {
+          "text": "can",
+          "start": 0.18,
+          "end": 0.36
+        },
+        {
+          "text": "give",
+          "start": 0.36,
+          "end": 0.48
+        },
+        {
+          "text": "the",
+          "start": 0.48,
+          "end": 0.68
+        },
+        {
+          "text": "keeper",
+          "start": 0.68,
+          "end": 0.88
+        },
+        {
+          "text": "a",
+          "start": 0.88,
+          "end": 1.1
+        },
+        {
+          "text": "voice,",
+          "start": 1.1,
+          "end": 1.44
+        },
+        {
+          "text": "audition",
+          "start": 1.78,
+          "end": 2.1
+        },
+        {
+          "text": "her",
+          "start": 2.1,
+          "end": 2.32
+        },
+        {
+          "text": "line,",
+          "start": 2.32,
+          "end": 2.64
+        },
+        {
+          "text": "and",
+          "start": 2.9,
+          "end": 3.0
+        },
+        {
+          "text": "place",
+          "start": 3.0,
+          "end": 3.22
+        },
+        {
+          "text": "it",
+          "start": 3.22,
+          "end": 3.38
+        },
+        {
+          "text": "over",
+          "start": 3.38,
+          "end": 3.54
+        },
+        {
+          "text": "the",
+          "start": 3.54,
+          "end": 3.7
+        },
+        {
+          "text": "cut.",
+          "start": 3.7,
+          "end": 3.86
+        }
+      ]
+    },
+    {
+      "id": "delivery",
+      "title": "Reframe the cut",
+      "text": "The same cut exports vertically, with the score, dialogue, and timed captions.",
+      "frames": 109056,
+      "sample_rate": 24000,
+      "sha256": "5d83fe3e29a5d9200bf5b88f8f5085f5b3d9ded682f14cb8779cbe637880228b",
+      "words": [
+        {
+          "text": "The",
+          "start": 0.0,
+          "end": 0.22
+        },
+        {
+          "text": "same",
+          "start": 0.22,
+          "end": 0.48
+        },
+        {
+          "text": "cut",
+          "start": 0.48,
+          "end": 0.72
+        },
+        {
+          "text": "exports",
+          "start": 0.72,
+          "end": 1.16
+        },
+        {
+          "text": "vertically,",
+          "start": 1.16,
+          "end": 1.62
+        },
+        {
+          "text": "with",
+          "start": 2.06,
+          "end": 2.16
+        },
+        {
+          "text": "the",
+          "start": 2.16,
+          "end": 2.42
+        },
+        {
+          "text": "score,",
+          "start": 2.42,
+          "end": 2.7
+        },
+        {
+          "text": "dialogue,",
+          "start": 2.94,
+          "end": 3.28
+        },
+        {
+          "text": "and",
+          "start": 3.5,
+          "end": 3.7
+        },
+        {
+          "text": "timed",
+          "start": 3.7,
+          "end": 3.9
+        },
+        {
+          "text": "captions.",
+          "start": 3.9,
+          "end": 4.34
+        }
+      ]
+    },
+    {
+      "id": "assistant",
+      "title": "Invite an assistant",
+      "text": "A paired assistant can read my project and suggest a shot. I review the change in Studio.",
+      "frames": 124256,
+      "sample_rate": 24000,
+      "sha256": "dba448cd1f445fefb0ee1af4f12c68de92d31425da6551231fa8f02841329af5",
+      "words": [
+        {
+          "text": "A",
+          "start": 0.0,
+          "end": 0.28
+        },
+        {
+          "text": "paired",
+          "start": 0.28,
+          "end": 0.46
+        },
+        {
+          "text": "assistant",
+          "start": 0.46,
+          "end": 0.96
+        },
+        {
+          "text": "can",
+          "start": 0.96,
+          "end": 1.38
+        },
+        {
+          "text": "read",
+          "start": 1.38,
+          "end": 1.54
+        },
+        {
+          "text": "my",
+          "start": 1.54,
+          "end": 1.84
+        },
+        {
+          "text": "project",
+          "start": 1.84,
+          "end": 2.26
+        },
+        {
+          "text": "and",
+          "start": 2.26,
+          "end": 2.54
+        },
+        {
+          "text": "suggest",
+          "start": 2.54,
+          "end": 2.86
+        },
+        {
+          "text": "a",
+          "start": 2.86,
+          "end": 3.06
+        },
+        {
+          "text": "shot.",
+          "start": 3.06,
+          "end": 3.26
+        },
+        {
+          "text": "I",
+          "start": 3.58,
+          "end": 3.78
+        },
+        {
+          "text": "review",
+          "start": 3.78,
+          "end": 4.02
+        },
+        {
+          "text": "the",
+          "start": 4.02,
+          "end": 4.24
+        },
+        {
+          "text": "change",
+          "start": 4.24,
+          "end": 4.46
+        },
+        {
+          "text": "in",
+          "start": 4.46,
+          "end": 4.72
+        },
+        {
+          "text": "Studio.",
+          "start": 4.72,
+          "end": 4.98
+        }
+      ]
+    },
+    {
+      "id": "end",
+      "title": "Play Tidal Relay",
+      "text": "Open Tidal Relay in Examples. H three Creative Studio is on GitHub.",
+      "frames": 110432,
+      "sample_rate": 24000,
+      "sha256": "dd2893fc380982b6caaa935f204b05f7dc7572bf1c153eb6243512e6b2ad2830",
+      "words": [
+        {
+          "text": "Open",
+          "start": 0.0,
+          "end": 0.452
+        },
+        {
+          "text": "Tidal",
+          "start": 0.452,
+          "end": 0.7748
+        },
+        {
+          "text": "Relay",
+          "start": 0.7748,
+          "end": 1.2913
+        },
+        {
+          "text": "in",
+          "start": 1.2913,
+          "end": 1.528
+        },
+        {
+          "text": "Examples.",
+          "start": 1.528,
+          "end": 2.023
+        },
+        {
+          "text": "H",
+          "start": 2.4093,
+          "end": 2.6193
+        },
+        {
+          "text": "three",
+          "start": 2.6193,
+          "end": 2.8293
+        },
+        {
+          "text": "Creative",
+          "start": 2.8293,
+          "end": 3.2093
+        },
+        {
+          "text": "Studio",
+          "start": 3.2093,
+          "end": 3.6293
+        },
+        {
+          "text": "is",
+          "start": 3.6293,
+          "end": 3.9093
+        },
+        {
+          "text": "on",
+          "start": 3.9093,
+          "end": 4.0693
+        },
+        {
+          "text": "GitHub.",
+          "start": 4.0693,
+          "end": 4.3893
+        }
+      ]
+    }
+  ]
+}
