@@ -1,5 +1,7 @@
 """Decode both tour masters, check the captions and audio, and write contact sheets and a receipt."""
 import argparse
+from bisect import bisect_right
+from itertools import accumulate
 from fractions import Fraction
 import json
 from pathlib import Path
@@ -72,6 +74,8 @@ def inspect_movie(path, aspect, work, chapters, expected, ffmpeg):
         left, right = (64 + 952*left) / size[0], (64 + 952*right) / size[0]
         top, bottom = (425 + 535*.18) / size[1], (425 + 535*.72) / size[1]
     monitor_min = float("inf")
+    chapter_ends = list(accumulate(expected))
+    picture_min = {ch["id"]: float("inf") for ch in chapters}
     with av.open(str(path)) as source:
         require(len(source.streams.video) == 1 and len(source.streams.audio) == 1, "Expected a picture and a stereo mix.")
         video, audio = source.streams.video[0], source.streams.audio[0]
@@ -81,8 +85,13 @@ def inspect_movie(path, aspect, work, chapters, expected, ffmpeg):
         for frame in source.decode(video=0):
             require(frame.pts is not None and abs(float(frame.pts*frame.time_base) - frames/FPS) < .0005,
                     f"Unexpected presentation time at frame {frames} in {path.name}")
+            probe = frame.reformat(width=192, height=192, format="gray").to_ndarray()
+            chapter_id = chapters[bisect_right(chapter_ends, min(frames,count-1))]["id"]
+            rows = probe[round(top*192):round(bottom*192)]
+            variation = float(rows[:,round(left*192):round(right*192)].std())
+            require(variation > 7, f"Blank {chapter_id} picture in {path.name} at frame {frames}")
+            picture_min[chapter_id] = min(picture_min[chapter_id], variation)
             if edit_start <= frames < edit_end:
-                probe = frame.reformat(width=192, height=192, format="gray").to_ndarray()
                 for x in (left, right):
                     columns = slice(round((x-.025)*192), round((x+.025)*192))
                     detail = float(probe[round(top*192):round(bottom*192), columns].std())
@@ -135,7 +144,7 @@ def inspect_movie(path, aspect, work, chapters, expected, ffmpeg):
     lufs, peak = loudness(ffmpeg, path)
     sheet.save(work / f"review-{aspect}.jpg", quality=92)
     return {"size": size, "frames":frames, "seconds":frames/FPS, "audio_samples":samples, "declared_audio_samples":declared_samples, "audio_timing":timing,
-            "lufs":lufs, "true_peak":peak, "edit_picture_check":{"first":edit_start,"last":edit_end-1,"minimum_luma_stddev":round(monitor_min,2)}, "sha256":sha256(path)}
+            "lufs":lufs, "true_peak":peak, "chapter_picture_min_stddev":{k:round(v,2) for k,v in picture_min.items()}, "edit_picture_check":{"first":edit_start,"last":edit_end-1,"minimum_luma_stddev":round(monitor_min,2)}, "sha256":sha256(path)}
 
 
 def main():

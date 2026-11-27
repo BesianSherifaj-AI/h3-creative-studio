@@ -135,6 +135,22 @@ def exercise(page, folder, record=False):
     def snap(name):
         page.wait_for_timeout(220)
         page.screenshot(path=folder/(name+".jpg"),type="jpeg",quality=96,scale="css",animations="disabled")
+    def capture_composition(name):
+        check("""() => {
+            const c = document.querySelector('#imageRoomCanvas');
+            if (!c || c.dataset.ready !== 'true' || !c.width || !c.height) return false;
+            const thumb = document.createElement('canvas');
+            thumb.width = 24; thumb.height = 16;
+            const ctx = thumb.getContext('2d');
+            ctx.drawImage(c, 0, 0, 24, 16);
+            const pixels = ctx.getImageData(3, 4, 18, 8).data;
+            const colors = new Set();
+            for (let i=0; i<pixels.length; i+=4) {
+                if (pixels[i+3] > 220) colors.add(pixels[i]>>3);
+            }
+            return colors.size >= 6;
+        }""", timeout=45000)
+        snap(name)
     def capture_controls(name, selectors):
         """Record the visible part of each control in its matching desktop screenshot."""
         assert page.viewport_size == {"width": 1440, "height": 900}
@@ -212,11 +228,11 @@ def exercise(page, folder, record=False):
     snap("branch-board")
     promoted_voice = verify_promoted_voice(page, folder)
     lesson("image")
-    page.click('[data-layer="2"]');snap("image-title")
+    page.click('[data-layer="2"]');capture_composition("image-title")
     orig=page.evaluate("H3.get().rev.id")
     page.fill("#lx","360");page.click("#applyLayer")
     check("old=>H3.get().rev.id!==old && H3.get().rev.layers[2].x===360",arg=orig)
-    snap("image-edited")
+    capture_composition("image-edited")
     lesson("motion")
     page.wait_for_selector('.motion-guides img')
     snap("motion")

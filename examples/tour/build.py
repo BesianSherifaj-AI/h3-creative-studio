@@ -106,6 +106,13 @@ def capture_inputs(captures):
                 if not (0 <= left < right <= 1440 and 0 <= top < bottom <= 900):
                     raise ValueError(f"Invalid capture rectangle for {shot}.{rect}: {values}")
                 named[shot, rect] = tuple(round(v) for v in values)
+    still_region = (380, 360, 995, 675)
+    before, after = (photo(captures / name) for name in ("image-title.jpg", "image-edited.jpg"))
+    if min(max(ImageStat.Stat(im.crop(still_region)).stddev) for im in (before, after)) < 10:
+        raise ValueError("The layered composition is blank in a workshop capture.")
+    crop = ART["image"][3]
+    if max(ImageStat.Stat(ImageChops.difference(before.crop(crop), after.crop(crop))).mean) < 1:
+        raise ValueError("The title layer did not visibly move between captures.")
     for shot, monitor in (("game-shore", (165, 275, 800, 568)), ("edit", (215, 180, 840, 420))):
         stream = [captures / ("record-" + shot) / f"{index:03}.jpg" for index in range(17)]
         for frame in stream:
