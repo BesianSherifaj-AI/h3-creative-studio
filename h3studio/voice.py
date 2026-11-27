@@ -356,8 +356,29 @@ def action(studio, project, op, args):
             installed, warning = [], str(exc)
         return dict(voices=installed, warning=warning)
     if op == "voice_render":
-        return studio._background("Generate narration",
-                                  lambda cancel, report: render(project, args, cancel, report), with_progress=True)
+        local = args.get("engine") == "local"
+        if local and studio.queue.guard():
+            raise ValueError("Local AI speech is paused for gaming. Audition a saved line or choose a Windows voice.")
+
+        def generate(cancel, report):
+            if not local:
+                return render(project, args, cancel, report)
+            next_check = 0.0
+
+            def stopped():
+                nonlocal next_check
+                if cancel() or studio.stop.is_set():
+                    return True
+                now = time.monotonic()
+                if now >= next_check:
+                    if studio.queue.guard():
+                        raise InterruptedError("Studio stopped this speech request for gaming.")
+                    next_check = now + 1.0
+                return False
+
+            return render(project, args, stopped, report)
+
+        return studio._background("Generate narration", generate, with_progress=True)
     if op == "voice_place":
         return place(project, args)
     if op == "voice_captions":

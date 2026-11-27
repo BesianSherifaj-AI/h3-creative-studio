@@ -130,7 +130,7 @@ class Studio:
                     info['result'] = fn(cancel.is_set)
                 info['state'] = 'completed'
             except Exception as e:
-                info.update(state='cancelled' if cancel.is_set() else 'failed', error=str(e))
+                info.update(state='cancelled' if cancel.is_set() or isinstance(e, InterruptedError) else 'failed', error=str(e))
         self.pool.submit(work)
         return {'task':ident}
 
@@ -142,8 +142,6 @@ class Studio:
             return cut_action(self,project,op,a)
         with self.lock:
             p = self.project
-            if op == "voice_render" and a.get("engine") == "local" and dispatch_guard(self.home):
-                raise ValueError("Local AI speech is paused for gaming. Audition a saved line or choose a Windows voice.")
             if op.startswith("voice_"):
                 from .voice import action
                 return action(self, p, op, a)
@@ -389,6 +387,7 @@ class Studio:
                 return self._background('Export film',lambda cancel: media.export_film(clips,out,
                     width=int(a['width']),height=int(a['height']),fps=str(a['fps']),color=a['color'],
                     audio_tracks=tracks,cancel=cancel,soundtracks=beds,
-                    framing=a.get('framing','fit'),captions=captions))
+                    framing=a.get('framing','fit'),captions=captions,
+                    crop_x=a.get('crop_x',50),crop_y=a.get('crop_y',50)))
             from .integrations import engine_action
             return engine_action(self, p, op, a)

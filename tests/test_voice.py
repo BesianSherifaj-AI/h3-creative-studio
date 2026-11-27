@@ -169,6 +169,43 @@ def test_cancel_while_waiting_for_first_speech_byte(tmp_path):
             thread.join()
 
 
+def test_gaming_pause_closes_inflight_local_speech_request(tmp_path):
+    from h3studio.application import Studio
+    from h3studio.runtime import gaming_pause
+
+    accepted, release = threading.Event(), threading.Event()
+
+    class Waiting(BaseHTTPRequestHandler):
+        def do_POST(self):
+            accepted.set()
+            release.wait(8)
+            self.close_connection = True
+
+        def log_message(self, *args):
+            pass
+
+    project = Project.create(tmp_path / "film", "Interrupted")
+    studio = Studio(tmp_path / "home", project.folder)
+    studio.queue.guard = lambda: ["Gaming pause"] if gaming_pause(studio.home) else []
+    with ThreadingHTTPServer(("127.0.0.1", 0), Waiting) as server:
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        try:
+            task = studio.action("voice_render", dict(engine="local", endpoint=f"http://127.0.0.1:{server.server_port}",
+                                model="fixture", voice="reader", text="A pending line."))["task"]
+            assert accepted.wait(4)
+            studio.action("gaming_pause", {"paused": True})
+            # A second editorial task runs only when the first has finished.
+            studio.pool.submit(lambda: None).result(timeout=4)
+            assert studio.tasks[task]["state"] == "cancelled"
+            assert "gaming" in studio.tasks[task]["error"] and not project.state()["assets"]
+        finally:
+            release.set()
+            studio.close()
+            server.shutdown()
+            worker.join()
+
+
 def test_optional_adapter_uses_exact_model_voice_and_wav():
     path = Path(__file__).resolve().parents[1] / "scripts/local_speech.py"
     spec = importlib.util.spec_from_file_location("h3_test_local_speech", path)

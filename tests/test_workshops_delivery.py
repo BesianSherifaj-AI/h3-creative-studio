@@ -62,6 +62,29 @@ def test_portrait_center_fill_and_muxed_overlapping_captions(tmp_path):
     assert write_captions(Path(tmp_path/"empty.srt"), [(1100, 1200, "Offscreen")], 1) == 0
 
 
+@pytest.mark.parametrize("source_size,output_size,axis", [((160, 90), (90, 160), "x"), ((90, 160), (160, 90), "y")])
+def test_reframed_export_keeps_chosen_subject(tmp_path, source_size, output_size, axis):
+    from PIL import Image
+
+    plate = Image.new("RGB", source_size, (210, 24, 24))
+    w, h = source_size
+    plate.paste((24, 24, 210), (w//2 if axis == "x" else 0, h//2 if axis == "y" else 0, w, h))
+    image = tmp_path / "subjects.png"
+    plate.save(image)
+    source = tmp_path / "subjects.mp4"
+    media.render_storyboard([{"frame": 0, "path": image}], source, frames=2, width=w, height=h)
+    width, height = output_size
+    for anchor, channel in ((0, 0), (100, 2)):
+        output = tmp_path / f"crop-{anchor}.mp4"
+        result = media.export_film([{"path": source}], output, width=width, height=height,
+                                   audio_tracks=0, framing="fill", **{"crop_"+axis: anchor})
+        assert result["crop_position"] == ([anchor, 50] if axis == "x" else [50, anchor])
+        with av.open(str(output)) as video:
+            pixels = next(video.decode(video=0)).to_ndarray(format="rgb24")
+        center = pixels[height//2, width//2]
+        assert center[channel] > 150 and center[2-channel] < 60
+
+
 def test_delivery_adapts_saved_audio_routes_to_selected_outputs(tmp_path, monkeypatch):
     from h3studio.application import Studio
     from h3studio.project import Project
@@ -78,8 +101,9 @@ def test_delivery_adapts_saved_audio_routes_to_selected_outputs(tmp_path, monkey
     monkeypatch.setattr(media, "export_film", lambda clips, out, **settings: (clips, settings))
     try:
         args = dict(path=str(tmp_path / "out.mp4"), width=160, height=90, fps="24", color="bt709")
-        clips, mix = studio.action("export", dict(args, audio_tracks=2))
+        clips, mix = studio.action("export", dict(args, audio_tracks=2, crop_x=30, crop_y=80))
         assert clips[0]["audio"] == [0, None]
+        assert (mix["crop_x"], mix["crop_y"]) == (30, 80)
         assert mix["soundtracks"][0]["track"] == 1
         clips, mix = studio.action("export", dict(args, audio_tracks=0))
         assert clips[0]["audio"] == [] and mix["soundtracks"] == []

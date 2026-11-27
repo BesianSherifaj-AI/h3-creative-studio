@@ -94,13 +94,18 @@ def install_dependencies(wheels, stage, packages):
         module.unlink()  # All Studio video I/O uses PyAV or the user's FFmpeg executable.
 
 
-def sources(stage):
+def packaged_sources():
     allowlist = (ROOT / "SOURCE_ALLOWLIST.txt").read_text("utf-8-sig").splitlines()
     for name in allowlist:
         path = PurePosixPath(name)
         if path.is_absolute() or ".." in path.parts: raise ValueError("Invalid source allowlist entry")
         if not (name in ("studio.py","requirements.txt","LICENSE","README.md","THIRD_PARTY_NOTICES.md","scripts/local_speech.py")
                 or name.startswith(("h3studio/","vendor/","docs/"))): continue
+        yield name
+
+
+def sources(stage):
+    for name in packaged_sources():
         dest = stage / "app" / name
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / name, dest)
@@ -160,6 +165,13 @@ def build(output,cache):
         with zipfile.ZipFile(archive) as z:
             bad=z.testzip()
             if bad:raise ValueError("ZIP verification failed for "+bad)
+            prefix = NAME + "/app/"
+            names = [n[len(prefix):] for n in z.namelist() if n.startswith(prefix)]
+            if sorted(names) != sorted(packaged_sources()):
+                raise ValueError("Packaged sources differ from the public allowlist.")
+            for name in names:
+                if z.read(prefix + name) != (ROOT / name).read_bytes():
+                    raise ValueError("The packaged copy differs from source: " + name)
         os.replace(archive,output)
     print(f"{output}  {digest(output)}  ({output.stat().st_size:,} bytes)")
 

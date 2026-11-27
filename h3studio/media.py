@@ -301,17 +301,20 @@ def render_storyboard(guides, output, *, frames=120, fps="24", width=768, height
 
 
 def export_film(clips, output, *, width=1920, height=1080, fps="24", color="bt709",
-                audio_tracks=1, cancel=None, soundtracks=(), framing="fit", captions=()):
+                audio_tracks=1, cancel=None, soundtracks=(), framing="fit", captions=(), crop_x=50, crop_y=50):
     _dimensions(width, height)
     rate = _positive_rate(fps)
     encoder = _encode(color)
     if type(audio_tracks) is not int or not 0 <= audio_tracks <= 8 or not clips:
         raise ValueError("Choose at least one clip and zero to eight delivery audio tracks.")
+    x, y = _ratio(crop_x), _ratio(crop_y)
+    if not (0 <= x <= 100 and 0 <= y <= 100):
+        raise ValueError("Crop position must be between 0 and 100 percent.")
     frame_filters = {
         "fit": [f"scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2:reset_sar=1",
                 f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2"],
         "fill": [f"scale={width}:{height}:force_original_aspect_ratio=increase:force_divisible_by=2:reset_sar=1",
-                 f"crop={width}:{height}"],
+                 f"crop={width}:{height}:(iw-ow)*{float(x)}/100:(ih-oh)*{float(y)}/100"],
     }
     if framing not in frame_filters:
         raise ValueError("Choose Fit or Center fill for delivery.")
@@ -409,7 +412,7 @@ def export_film(clips, output, *, width=1920, height=1080, fps="24", color="bt70
         _run(args, cancel)
     return dict(kind="film", frames=total_frames, fps=str(rate), width=width, height=height,
                 duration=float(total_frames/rate), audio_tracks=audio_tracks, color=color,
-                cuts=cut_list, framing=framing, captions=cue_count, path=str(Path(output).resolve()))
+                cuts=cut_list, framing=framing, crop_position=[float(x),float(y)], captions=cue_count, path=str(Path(output).resolve()))
 
 
 def prepare_h3_join(entries, schema):

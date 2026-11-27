@@ -129,6 +129,18 @@ def exercise(page, folder, record=False):
     page.wait_for_selector('#deliveryMask video:not([hidden])')
     check("document.querySelector('#deliveryPreview').videoWidth>0 && document.querySelector('#deliveryPreview').style.objectFit==='cover'")
     snap("portrait")
+    bounds = page.locator("#deliveryMask").bounding_box()
+    cx, cy = bounds["x"]+bounds["width"]/2, bounds["y"]+bounds["height"]/2
+    page.mouse.move(cx, cy)
+    page.mouse.down()
+    page.mouse.move(cx+30, cy)
+    page.mouse.up()
+    check("Number(document.querySelector('#deliveryX').value)<50")
+    page.click("#deliveryCrop summary")
+    page.locator("#deliveryX").press("End")
+    check("document.querySelector('#deliveryPreview').style.objectPosition==='100% 50%'")
+    page.click("#resetCrop")
+    check("document.querySelector('#deliveryPreview').style.objectPosition==='50% 50%'")
     # Render a modest companion fixture through the same UI. Preserve the chosen 9:16 framing.
     page.fill('#ew','360');page.fill('#eh','640')
     path=folder/'Narrated vertical.mp4';pick_path(page,path)

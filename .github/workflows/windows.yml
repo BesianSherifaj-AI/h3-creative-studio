@@ -1,0 +1,76 @@
+name: Windows community build
+
+on:
+  pull_request:
+  push:
+    branches: ['release/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 40
+    env:
+      PYTHONUTF8: '1'
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+      - name: Check the public source list
+        run: |
+          python -c "from pathlib import Path; import subprocess; a=Path('SOURCE_ALLOWLIST.txt').read_text().splitlines(); files=subprocess.check_output(['git','ls-files','-z']).decode().split(chr(0))[:-1]; assert sorted(a)==sorted(files),set(a)^set(files)"
+      - name: Install desktop and test dependencies
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install -r requirements.txt pytest==9.2.0 playwright==1.62.0 wheel==0.45.1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          (Resolve-Path .venv\Scripts).Path >> $env:GITHUB_PATH
+      - name: Install and verify Studio's pinned media tools
+        run: |
+          $bin = python -c "import os; from pathlib import Path; from h3studio.community import install; os.environ['PATH']=str(Path(os.environ['SystemRoot'])/'System32'); print(Path(install(Path(os.environ['RUNNER_TEMP'])/'h3-media')['media']['ffmpeg']).parent)"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $bin >> $env:GITHUB_PATH
+      - name: Run regression suite
+        run: python -m pytest -q --junitxml=dist/source-tests.xml
+      - name: Build and compare portable ZIP with source
+        if: github.event_name != 'pull_request'
+        run: python scripts/build_portable.py
+      - name: Save built package
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: windows-portable
+          path: dist/*.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+      - name: Launch extracted Studio and verify Film, Game and editing
+        if: github.event_name != 'pull_request'
+        run: |
+          $archive = Get-Item dist/*.zip
+          Expand-Archive -LiteralPath $archive.FullName -DestinationPath dist/extracted
+          python scripts/verify_community.py --exe "dist/extracted/H3 Creative Studio/H3 Creative Studio.exe" --edit-workflow --evidence dist/community
+      - name: Verify narration, assistants, editable examples and delivery
+        if: github.event_name != 'pull_request'
+        run: python scripts/verify_workshops.py --record --exe "dist/extracted/H3 Creative Studio/H3 Creative Studio.exe" --evidence dist/workshops
+      - name: Save test results
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: verified-examples
+          path: |
+            dist/source-tests.xml
+            dist/community/Studio-*/verification.json
+            dist/workshops/Workshops-*/verified.json
+            dist/workshops/Workshops-*/*.jpg
+            !dist/workshops/Workshops-*/failure.jpg
+            dist/workshops/Workshops-*/record-*/*.jpg
+            dist/workshops/Workshops-*/Narrated vertical.mp4
+          retention-days: 3

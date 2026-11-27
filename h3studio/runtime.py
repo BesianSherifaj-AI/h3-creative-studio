@@ -312,7 +312,7 @@ def stop_engine(home,kind,config=None):
     with _lock(base):
         receipt=_read(base)
         procs=_owned(base,receipt)
-        guard=game_guard()
+        guard=dispatch_guard(home)
         status=_status(base,port,guard)
         if not procs or status["state"]=="occupied":
             return status

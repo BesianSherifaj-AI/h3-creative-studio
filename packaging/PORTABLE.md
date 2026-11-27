@@ -6,7 +6,7 @@
 4. For media playback, export and frame extraction, the setup panel under **?** can install FFmpeg and ffprobe for Studio. A compatible full FFmpeg build on PATH also works.
 5. For generation, open **Engines** and connect your installed H3 video, image, Director or UPSCALE services. Their separate environments and model files can stay in their original locations.
 
-In **Edit → Narration**, use an installed Windows voice to record character lines. Add a line to the timeline and include its timed captions in **Export film**. Choose **Vertical** and **Center fill** to reframe your cut for portrait delivery. Under **? → Connect an AI client**, copy the MCP configuration to your client. **Queue → Pause AI** holds new AI work and releases idle Studio renderers when you need the machine for gaming.
+In **Edit → Narration**, use an installed Windows voice to record character lines. Add a line to the timeline and include its timed captions in **Export film**. Choose **Vertical** and **Center fill** to reframe your cut for portrait delivery. Drag the picture in the preview to keep a subject in frame. Under **? → Connect an AI client**, copy the MCP configuration to your client. **Queue → Pause AI** holds new AI work and releases idle Studio renderers when you need the machine for gaming.
 
 **Create desktop shortcut.cmd** creates an optional shortcut to this portable copy. If you move this folder, run that command again.
 
