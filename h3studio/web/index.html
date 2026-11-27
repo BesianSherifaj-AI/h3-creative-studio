@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>H3 Creative Studio</title><link rel="stylesheet" href="/studio.css"><script defer src="/studio.js"></script><script defer src="/runtime.js"></script><script defer src="/engines.js"></script><script defer src="/editor.js"></script><script defer src="/recovery.js"></script></head>
+<body><header class="top"><div class="identity"><b class="mark">H3</b><strong>Creative Studio</strong></div><span class="divider"></span><button id="projectMenu" class="project-name" title="Project menu">Project ▾</button><div class="top-actions"><button id="engines">Engines</button><button id="queue">Queue <span id="count">0</span></button><button id="export" class="primary">Export film ↗</button></div></header>
+<main class="layout"><aside class="library"><div class="section-title"><span>PROJECT LIBRARY</span><button id="addMedia" title="Import media">＋</button></div><h2 id="libraryName">Film</h2><div class="eyeline">Compositions</div><div id="comps"></div><div class="eyeline">Shots <button id="newShot" title="New shot">＋</button></div><div id="shots"></div><div class="library-foot"><button id="director" class="wide">✧ &nbsp; AI Director</button><button id="recovery">Import legacy project</button></div></aside>
+<section class="work"><div class="work-head"><div><div class="eyeline" id="workType">COMPOSITION</div><h1 id="compName">Canvas</h1></div><div class="segmented"><button id="canvasTab" class="active">Canvas</button><button id="takeTab">Take</button></div></div>
+<div id="stage"><div id="emptyArt">Import a still or open a project to start editing.</div><img id="canvasImage" alt="Layered composition preview" draggable="false" hidden><video id="player" controls playsinline hidden></video></div>
+<div class="canvas-info"><span id="canvasMeta"></span><span id="revisionMeta"></span></div>
+<section class="timeline"><div class="timeline-head"><div><div class="eyeline">SHOT TIMELINE</div><h2 id="shotName">Select a shot</h2></div><div class="time-read"><b id="timecode">00:00.00</b><small>24 FPS</small></div></div>
+<div id="track"><div class="ruler"></div><div id="markers"></div><i id="playhead"></i></div>
+<input id="scrubber" type="range" min="0" max="119" value="0" aria-label="Displayed frame">
+<div class="track-footer"><span id="frameLabel">Frame 0</span><span id="durationLabel">5.00 s</span></div>
+<div class="timeline-tools"><button id="guide">＋ Place guide</button><button id="mediaGuide">Media guide</button><button id="preview" class="soft">▷ Render storyboard</button></div>
+</section></section>
+<aside class="inspector"><div class="section-title">INSPECTOR</div><div class="tabs"><button data-pane="layers" class="active">Layers</button><button data-pane="shot">Shot</button><button data-pane="ai">Generate</button></div><div id="pane"></div></aside></main>
+<footer><span><i class="dot"></i><b id="projectStatus">Local project</b></span><span id="gpuStatus">Checking game guard…</span></footer>
+<dialog id="dialog"><form method="dialog" id="dialogForm"><div class="dialog-head"><h2 id="dialogTitle"></h2><button type="button" id="closeDialog" aria-label="Close">×</button></div><div id="dialogBody"></div><div id="dialogError" role="alert"></div><div id="dialogFoot"></div></form></dialog>
+<div id="toast" role="status" hidden></div></body></html>
