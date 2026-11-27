@@ -1,6 +1,6 @@
 'use strict';
 const directorData=()=>state.doc.director||{boards:{},reviews:{},turns:{},active_turn:null};
-const directorButton=(action,label,value='')=>'<button type="button" data-director="'+action+'" data-value="'+esc(value)+'">'+esc(label)+'</button>';
+const directorButton=(action,label,value='',primary=false)=>'<button type="button" '+(primary?'class="primary" ':'')+'data-director="'+action+'" data-value="'+esc(value)+'">'+esc(label)+'</button>';
 function directorEvents(actions){
   document.querySelectorAll('[data-director]').forEach(b=>b.onclick=handle(async()=>{
     b.disabled=true;
@@ -15,13 +15,20 @@ function directorHome(){
   const pending=Object.values(data.reviews).filter(r=>!data.boards[r.id]&&!data.turns[r.id]&&!(r.intent.board&&data.boards[r.intent.board]?.rows[r.intent.row]?.revision===r.id));
   const list=(entries,fn)=>'<div class="dialog-menu">'+entries.map(fn).join('')+'</div>';
   modal('AI Director',sel('Production','dmode',[['film','Film'],['game','Game']],'film')+
-    '<div id="dcountbox">'+fld('Number of shots','dcount',2,'number','min="1" max="12"')+'</div>'+
+    '<div id="dcountbox">'+fld('Number of shots','dcount',2,'number','min="1" max="12"')+
+      sel('Preferred Film approval','dapproval',[['storyboard','Keep storyboard only'],['per_shot','Approve individual shots'],['all','Approve and render all']],state.preferences.film_approval||'per_shot')+'</div>'+
     area('Film brief or opening Game action','dbrief')+
     '<p class="note">Selected model · '+esc(state.preferences.director_model||'Choose a model in Engines')+'</p>'+
     (boards.length?'<h3>Film storyboards</h3>'+list(boards,([id,b])=>directorButton('board',b.title+' · '+b.rows.length+' shots',id)):'')+
     (turns.length?'<h3>Game turns</h3>'+list(turns,([id,t])=>directorButton('turn',(id===data.active_turn?'Current · ':'')+t.action,id)):'')+
     (pending.length?'<h3>Awaiting review</h3>'+list(pending,r=>directorButton('review',r.intent.brief,r.id)):''),
     [{label:'Request plan',primary:true,run:()=>directorRequest({mode:val('dmode'),count:+val('dcount'),prompt:val('dbrief')})}]);
+  $('#dapproval').onchange=handle(async()=>{
+    const choice=val('dapproval');
+    state.preferences.film_approval=choice;
+    try { await api('settings',{film_approval:choice}); }
+    catch(error){ await refresh();throw error; }
+  });
   $('#dmode').onchange=()=>{$('#dcountbox').hidden=val('dmode')==='game';};
   directorEvents({board:directorBoard,turn:directorTurn,review:directorReview});
 }
@@ -49,7 +56,7 @@ function directorReview(id){
     [{label:'Approve revision',primary:true,run:()=>directorAccept(id)}]);
 }
 async function directorBoard(id){
-  const data=directorData(),board=data.boards[id];
+  const data=directorData(),board=data.boards[id],approval=state.preferences.film_approval||'per_shot';
   state.jobs=await api('jobs');
   const jobs=new Map(state.jobs.gpu.map(j=>[j.id.replaceAll('-',''),j]));
   const rows=board.rows.map((r,i)=>{
@@ -57,7 +64,7 @@ async function directorBoard(id){
     const renderName=last&&last.version===(r.version||0)?'Regenerate video take':'Render shot';
     return '<section class="status-card"><strong>'+esc(i+1)+'. '+esc(r.title)+'</strong><small>'+r.duration+' s · '+
       (locked?'Locked take '+esc(locked.slice(0,8)):s?'Approved':'Awaiting approval')+(job?' · '+esc(job.status):'')+'</small><p>'+esc(r.prompt)+'</p>'+
-      (s?directorButton('open','Open shot',i):directorButton('approve','Approve shot',i))+
+      (s?directorButton('open','Open shot',i):directorButton('approve','Approve shot',i,approval==='per_shot'))+
       (s?.selected_take?directorButton('lock',locked?'Unlock take':'Lock selected take',i):'')+
       (!locked?directorButton('revise','Revise prompt',i):'')+
       (s&&!locked?directorButton('render',renderName,i):'')+
@@ -75,9 +82,10 @@ async function directorBoard(id){
   };
   modal(board.title,rows,[
     {label:'Director',run:directorHome},
+    ...(approval==='storyboard'?[{label:'Keep storyboard',primary:true,run:closeModal}]:[]),
     ...(board.rows.some(r=>!r.shot)?[
       {label:'Approve all shots',run:()=>directorAccept(id)},
-      {label:'Approve and render all',primary:true,run:async()=>{
+      {label:'Approve and render all',primary:approval==='all',run:async()=>{
         await api('director_approve',{review:id});
         await requestRender();
       }}

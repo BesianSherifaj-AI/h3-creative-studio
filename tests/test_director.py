@@ -67,6 +67,9 @@ def test_two_shot_review_lock_rerender_and_reopen(setup):
     left,right=(finish(j,i) for i,j in enumerate(jobs))
     assert [p.state()["shots"][s]["selected_take"] for s in (s1,s2)]==[left,right]
     call("director_lock",board=board,row=0,take=left,locked=True)
+    with pytest.raises(ValueError,match="Unlock this shot"):
+        p.branch_take(left,"retry")
+    assert Project(p.folder).state()["cut"] == [s1,s2]
     prior=jobs[1].replace("-","")
     again=call("director_render",board=board,row=1,request_id=str(uuid.uuid4()),retry=True,previous=prior)["jobs"][0]
     assert p.state()["prepared"][again.replace("-","")]["request"]["seed"] != 19
@@ -88,6 +91,9 @@ def test_two_shot_review_lock_rerender_and_reopen(setup):
     assert p.state()["shots"][s2]["name"]=="Interior"
     assert p.state()["takes"][updated]["settings"]["request"]["prompt"]=="A hand opens the window."
     assert p.state()["shots"][s1]["selected_take"]==left
+    call("director_lock",board=board,row=0,take=left,locked=False)
+    retry = p.branch_take(left,"retry")
+    assert Project(p.folder).state()["cut"] == [retry,s2]
 
 
 def test_forked_game_request_uses_accepted_path_only(setup):

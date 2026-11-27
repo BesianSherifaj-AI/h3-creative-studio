@@ -144,7 +144,9 @@ class Studio:
                 from .engine_controls import engine_action
                 return engine_action(self,op,a)
             if op == 'settings':
-                keys = ('video_url','image_url','director_url','director_model','finishing_install')
+                if 'film_approval' in a and a['film_approval'] not in ('storyboard','per_shot','all'):
+                    raise ValueError('Choose a Film approval mode.')
+                keys = ('video_url','image_url','director_url','director_model','finishing_install','film_approval')
                 self.prefs.update({k:str(a[k]).strip() for k in keys if k in a})
                 atomic_json(self.prefs_path, self.prefs)
                 return self.state()

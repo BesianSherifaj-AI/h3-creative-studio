@@ -290,62 +290,86 @@
     const review=await ui().api("compare_finish",args);
     by("player")?.pause();
     const clip=(id,title,side)=>'<section style="flex:1;min-width:0"><h3>'+title+'</h3>'+
-      '<video id="'+id+'" src="'+ui().esc(side.url)+'" playsinline preload="auto" style="width:100%;display:block"></video>'+
+      '<div style="position:relative"><video id="'+id+'" src="'+ui().esc(side.url)+'" playsinline preload="auto" style="width:100%;display:block"></video>'+
+      '<canvas id="'+id+'Still" hidden style="position:absolute;inset:0;width:100%;height:100%"></canvas></div>'+
       '<output id="'+id+'Pos"></output></section>';
     ui().modal("Compare source and finish",
       '<div class="row">'+clip("compareLeft","Source",review.source)+clip("compareRight","Finished",review.finished)+'</div>'+
-      '<label class="field">Shared playhead<input id="compareScrub" type="range" min="0" max="'+review.duration+'" step="any" value="0"></label>'+
+      '<label class="field">Shared playhead <output id="compareTime"></output><input id="compareScrub" type="range" min="0" max="'+review.duration+'" step="any" value="0"></label>'+
       '<div class="row"><button type="button" id="comparePlay">Play both</button><label class="field">Listen to<select id="compareAudio">'+
       '<option value="source">Source</option><option value="finished">Finished</option><option value="mute">Mute both</option></select></label></div>');
     const left=by("compareLeft"),right=by("compareRight"),slider=by("compareScrub"),toggle=by("comparePlay");
-    let playing=false,raf=0;
+    let playing=false,raf=0,transport=0;
     const mediaRows=[[left,review.source],[right,review.finished]];
     function frameAt(side,time) {
       const runs=side.runs;
       let lo=0,hi=runs.length;
-      while(lo+1<hi){const mid=(lo+hi)>>1;if(runs[mid][1]<=time+.000001)lo=mid;else hi=mid;}
+      while(lo+1<hi){const mid=(lo+hi)>>1;if(runs[mid][1]<=time+1e-12)lo=mid;else hi=mid;}
       const [index,start,interval,count]=runs[lo];
-      return index+Math.min(count-1,Math.max(0,Math.floor((time-start+.000001)/interval)));
+      const offset=Math.min(count-1,Math.max(0,Math.floor((time-start+1e-12)/interval)));
+      return {index:index+offset,start:start+offset*interval,mid:start+(offset+.5)*interval};
     }
-    function label(video,side,seconds) {
-      by(video.id+"Pos").textContent="Frame "+frameAt(side,seconds)+" · "+seconds.toFixed(4)+" s";
+    function label(video,sample) {
+      by(video.id+"Pos").textContent="Frame "+sample.index+" · "+sample.start.toFixed(4)+" s";
     }
-    function align(seconds) {
-      const at=Math.max(0,Math.min(seconds,review.duration));
-      slider.value=at;
-      for(const [video] of mediaRows){if(Math.abs(video.currentTime-at)>.00001)video.currentTime=at;}
+    function clock(at) {slider.value=at;by("compareTime").textContent=at.toFixed(6)+" s";}
+    function seek(video,time) {
+      if(video.readyState>=2 && !video.seeking && Math.abs(video.currentTime-time)<1e-8)return Promise.resolve();
+      return new Promise((resolve,reject)=>{
+        const done=()=>{clearTimeout(timer);video.removeEventListener("seeked",done);resolve();};
+        const timer=setTimeout(()=>{video.removeEventListener("seeked",done);reject(Error("Frame comparison seek timed out."));},8000);
+        video.addEventListener("seeked",done);video.currentTime=time;
+      });
     }
-    function pause() {
+    async function pauseAt(seconds) {
+      const id=++transport,at=Math.max(0,Math.min(seconds,review.duration));
       playing=false;left.pause();right.pause();right.playbackRate=1;
-      cancelAnimationFrame(raf);toggle.textContent="Play both";align(left.currentTime);
+      cancelAnimationFrame(raf);toggle.textContent="Play both";clock(at);slider.dataset.settled="false";
+      const frames=mediaRows.map(([video,side])=>({video,sample:frameAt(side,at),still:by(video.id+"Still")}));
+      // Pausing Chromium can leave the compositor one sample ahead of currentTime. Decode
+      // inside both intended sample intervals before capturing the two visible hold frames.
+      await Promise.all(frames.map(({video,sample})=>seek(video,sample.mid)));
+      await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+      if(id!==transport || !left.isConnected || !by("dialog").open)return;
+      for(const {video,sample,still} of frames){
+        const scale=Math.min(1,1920/Math.max(video.videoWidth,video.videoHeight));
+        still.width=Math.max(1,Math.round(video.videoWidth*scale));still.height=Math.max(1,Math.round(video.videoHeight*scale));
+        still.getContext("2d").drawImage(video,0,0,still.width,still.height);
+        still.hidden=false;label(video,sample);
+      }
+      // Park both underlying transports at the same cut time for the next Play command.
+      await Promise.all(frames.map(({video})=>seek(video,at)));
+      if(id===transport)slider.dataset.settled="true";
     }
     function sync(){
       if(!playing || !left.isConnected)return;
-      slider.value=left.currentTime;
-      if(left.currentTime>=review.duration || left.ended || right.ended){pause();return;}
+      clock(left.currentTime);
+      if(left.currentTime>=review.duration || left.ended || right.ended){pauseAt(review.duration).catch(issue);return;}
       const drift=left.currentTime-right.currentTime;
       if(!right.seeking && Math.abs(drift)>.048)right.currentTime=left.currentTime;
       else right.playbackRate=1+Math.max(-.05,Math.min(.05,drift*.9));
       raf=requestAnimationFrame(sync);
     }
     act("comparePlay",async()=>{
-      if(playing){pause();return;}
-      if(left.ended || +slider.value>=review.duration-.00001)align(0);
+      if(playing){await pauseAt(left.currentTime);return;}
+      const id=++transport,at=+slider.value>=review.duration-.00001?0:+slider.value;
+      await Promise.all(mediaRows.map(([v])=>seek(v,at)));if(id!==transport)return;
+      for(const [v] of mediaRows)by(v.id+"Still").hidden=true;
       playing=true;toggle.textContent="Pause both";
-      try{await Promise.all([left.play(),right.play()]);sync();}catch(err){pause();throw err;}
+      try{await Promise.all([left.play(),right.play()]);sync();}catch(err){await pauseAt(at);throw err;}
     });
-    slider.oninput=()=>{const at=Number(slider.value);pause();align(at);};
+    slider.oninput=()=>pauseAt(Number(slider.value)).catch(issue);
     const sound=()=>{left.muted=by("compareAudio").value!=="source";right.muted=by("compareAudio").value!=="finished";};
     by("compareAudio").onchange=sound;sound();
     for(const [video,side] of mediaRows){
-      label(video,side,0);
+      label(video,frameAt(side,0));
       if(video.requestVideoFrameCallback){
-        const tick=(_,m)=>{if(video.isConnected && by("dialog").open){label(video,side,m.mediaTime);video.requestVideoFrameCallback(tick);}};
+        const tick=(_,m)=>{if(video.isConnected && by("dialog").open){if(playing)label(video,frameAt(side,m.mediaTime+.000001));video.requestVideoFrameCallback(tick);}};
         video.requestVideoFrameCallback(tick);
-      }else video.ontimeupdate=()=>label(video,side,video.currentTime);
+      }else video.ontimeupdate=()=>{if(playing)label(video,frameAt(side,video.currentTime));};
       video.onerror=()=>issue(Error("The comparison preview could not be decoded."));
     }
-    by("dialog").addEventListener("close",()=>{playing=false;cancelAnimationFrame(raf);left.pause();right.pause();},{once:true});
+    by("dialog").addEventListener("close",()=>{transport++;playing=false;cancelAnimationFrame(raf);left.pause();right.pause();},{once:true});
   }
   window.editTools={paint,range,openFrame,oneFrame,compare};
 })();

@@ -198,3 +198,29 @@ def test_shadow_correction_uses_local_surface_and_keeps_patterned_texture():
     textured_source[54:75,54:74]=[205,200,4]
     result=np.asarray(tools._masked_result(rgba(textured_source),rgba(texture),mask,"remove"))
     assert np.corrcoef(result[55:74,54:74,0].ravel(),texture[55:74,54:74,0].ravel())[0,1]>.98
+
+
+def test_small_texture_repair_continues_slanted_ribs_and_keeps_protected_pixels():
+    y, x = np.mgrid[:123, :125]
+    coverage = np.uint8(((x-64)/21)**2 + ((y-58)/18)**2 < 1) * 255
+    target = coverage > 0
+    grain = np.random.default_rng(485).normal(0, 1.5, x.shape)
+    surface = 90 + 22*np.cos((x+y*.5)*.32) + grain
+    clean = np.stack((surface+8, surface+4, surface), axis=2).astype(np.uint8)
+    marked, proposal = clean.copy(), clean.copy()
+    marked[target] = [248, 30, 100]
+    # A sharp, misplaced diagonal hatch contradicts the existing soft ribs.
+    hatch = np.where((x-y) % 9 < 4, -52., 52.)
+    proposal[target] = np.clip(clean[target].astype(float) + hatch[target, None], 0, 255)
+    mask = Image.fromarray(coverage)
+    before = Image.fromarray(marked).convert("RGBA")
+    prediction = Image.fromarray(proposal).convert("RGBA")
+    kept = np.asarray(tools._masked_result(before, prediction, mask, "remove", "texture"))[:, :, :3]
+    automatic = np.asarray(tools._masked_result(before, prediction, mask, "remove"))[:, :, :3]
+    check = np.asarray(tools._masked_result(before, prediction, mask, "remove"))[:, :, :3]
+    assert np.array_equal(automatic, check) and np.array_equal(automatic[~target], clean[~target])
+    def error(result):
+        return abs(result.astype(float) - clean)[target].mean()
+    flat = np.broadcast_to(np.median(clean[~target], axis=0), clean.shape)
+    assert error(automatic) < min(error(kept), error(flat)) * .65
+    assert np.corrcoef(automatic[:, :, 0][target], clean[:, :, 0][target])[0, 1] > .85

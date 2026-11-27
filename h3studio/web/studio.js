@@ -147,6 +147,11 @@ function inspector(){
     document.querySelectorAll('[data-take]').forEach(b=>b.onclick=handle(async()=>{await api('select',{shot:shot.id,take:b.dataset.take});state.view='take';await refresh();}));
     on('#openFrame',()=>window.editTools.openFrame());on('#applyFrame',()=>window.editTools.oneFrame());on('#rangeEdit',()=>window.editTools.range());on('#trim',trimTake);on('#finish',finish);on('#compareFinish',()=>window.editTools.compare({take:take.id}));
     on('#prevSource',()=>stepSource(-1));on('#nextSource',()=>stepSource(1));
+    if(shot.locked_take && $('#branchRetry')){
+      $('#branchRetry').disabled=true;
+      $('#branchRetry').textContent='Try another take · locked';
+      $('#branchRetry').title='Unlock this shot in its Film storyboard to replace it.';
+    }
     [['#branchContinue','continue'],['#branchRetry','retry'],['#branchScene','scene']].forEach(([id,action])=>on(id,async()=>{const r=await api('branch',{take:take.id,action});state.shotId=r.shot;state.view='canvas';state.plan=null;await refresh();toast('Shot added to the cut.');}));
     on('#earlier',()=>moveShot(-1));on('#later',()=>moveShot(1));on('#cutHistory',()=>window.recoverTools.history());on('#master',masterDialog);
   }else{

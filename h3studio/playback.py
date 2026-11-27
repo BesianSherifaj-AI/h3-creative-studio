@@ -133,7 +133,16 @@ def finish_comparison(studio,project,args):
             raise ValueError("This finishing job has no source take in this project.")
         result=job["receipt"]["result"]
         from .integrations import _archive_result
-        asset=_archive_result(project,result["output_path"],result.get("sha256"))
+        digest=result.get("sha256")
+        asset=None
+        if digest in doc["assets"]:
+            try:
+                project.asset_path(digest)
+                asset=digest
+            except ValueError:
+                pass
+        if not asset:
+            asset=_archive_result(project,result["output_path"],digest)
         parent=doc["takes"][pl["parent_take"]]
         trim=pl.get("delivery_trim")
         route=pl.get("audio_route")
@@ -142,11 +151,16 @@ def finish_comparison(studio,project,args):
         finished=doc["takes"][args["take"]]
         if finished["settings"].get("kind")!="finish" or not finished.get("parent_take"):
             raise ValueError("Choose a finished take with an archived source.")
-        parent=doc["takes"][finished["parent_take"]]
+        original=finished
+        parent=doc["takes"][original["parent_take"]]
+        while (not original["settings"].get("job_id") and parent["settings"].get("kind")=="finish" and
+               parent["video_asset"]==finished["video_asset"] and parent.get("parent_take")):
+            original=parent
+            parent=doc["takes"][original["parent_take"]]
         asset=finished["video_asset"]
         trim=finished["settings"].get("delivery_trim")
         route=finished["settings"].get("audio_route")
-        key=finished["id"]
+        key=finished["settings"].get("job_id") or finished["id"]
     source=project.asset_path(parent["video_asset"])
     output=project.asset_path(asset)
     if trim:
@@ -157,7 +171,7 @@ def finish_comparison(studio,project,args):
     right_clock=_review_clock(output,right_trim)
     left_clock=_review_clock(source,trim)
     def view(path,clip,suffix,asset_id):
-        if not clip and _direct_playback(path):
+        if not clip and (not route or route[0]==0) and _direct_playback(path):
             return "/asset/"+asset_id
         cache=project.folder/"preview-cache"/(key+"-compare-"+suffix+"-"+PROXY_VERSION+".mp4")
         if not cache.is_file():

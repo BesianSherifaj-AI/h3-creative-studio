@@ -364,6 +364,8 @@ class Project:
         with self.transaction() as state:
             take = _lookup(state, "takes", take_id)
             old = _lookup(state, "shots", take["shot"])
+            if action == "retry" and old.get("locked_take"):
+                raise ValueError("Unlock this shot in its Film storyboard before replacing it with another take.")
             shot = self._shot(name or (old["name"] + " · " + action), old["duration"])
             shot.update(branch_action=action)
             if action == "retry":

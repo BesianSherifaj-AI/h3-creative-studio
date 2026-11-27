@@ -69,6 +69,83 @@ def _smooth_repair(original, edited, mask):
     return repaired
 
 
+def _limit_texture(original, proposal, mask):
+    """Continue nearby structure through a small hole if generated detail is an outlier."""
+    import cv2
+    import numpy as np
+    x, y, w, h = cv2.boundingRect(mask)
+    if min(w, h) < 12 or max(w, h) > 128 or not x or not y or x+w >= mask.shape[1] or y+h >= mask.shape[0]:
+        return None
+    pad = max(12, min(40, min(w, h) // 2))
+    box = np.s_[max(0, y-pad):y+h+pad, max(0, x-pad):x+w+pad]
+    src, candidate, hole = original[box], proposal[box], mask[box]
+    inside = cv2.distanceTransform(hole, cv2.DIST_L2, 3) > 4
+    outside = cv2.distanceTransform((hole == 0).astype(np.uint8), cv2.DIST_L2, 3)
+    # Keep samples clear of the marked object's contribution to either filter.
+    ring = (outside >= 6) & (outside < pad)
+    if min(inside.sum(), ring.sum()) < 64:
+        return None
+
+    def detail(rgb):
+        gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY).astype(np.float32)
+        smooth = cv2.GaussianBlur(gray, (0, 0), 1.5)
+        dx = cv2.Sobel(smooth, cv2.CV_32F, 1, 0, scale=.125)
+        dy = cv2.Sobel(smooth, cv2.CV_32F, 0, 1, scale=.125)
+        return gray-smooth, dx, dy
+
+    src_grain, dx, dy = detail(src)
+    gen_grain, gx, gy = detail(candidate)
+    ref = np.percentile(abs(src_grain[ring]), 90)
+    gen = np.percentile(abs(gen_grain[inside]), 90)
+    ref_edge = np.percentile(np.hypot(dx[ring], dy[ring]), 90)
+    gen_edge = np.percentile(np.hypot(gx[inside], gy[inside]), 90)
+    if gen <= 2*ref + 2 or gen_edge <= 2*ref_edge + 2:
+        return None
+
+    base = cv2.inpaint(src, hole, 3, cv2.INPAINT_NS).astype(np.float32)
+    gradients = np.stack((dx[ring], dy[ring]), axis=1)
+    energy, axes = np.linalg.eigh(gradients.T @ gradients)
+    coherence = (energy[1] - energy[0]) / max(float(energy.sum()), 1e-6)
+    # A coherent structure tensor gives the direction in which a fold or stripe
+    # continues. Interpolate between unmasked boundaries along this direction.
+    py, px = np.nonzero(hole)
+    if coherence > .3:
+        tx, ty = axes[:, 0]
+        sides = []
+        for sign in (-1, 1):
+            distances = np.zeros(len(px), np.float32)
+            colors = base[py, px].copy()
+            for step in range(1, int(np.hypot(w, h)) + 2):
+                sx = np.rint(px + sign*step*tx).astype(int)
+                sy = np.rint(py + sign*step*ty).astype(int)
+                valid = (sx >= 0) & (sx < hole.shape[1]) & (sy >= 0) & (sy < hole.shape[0])
+                sx = sx.clip(0, hole.shape[1]-1)
+                sy = sy.clip(0, hole.shape[0]-1)
+                hit = valid & (distances == 0) & (hole[sy, sx] == 0)
+                colors[hit] = src[sy[hit], sx[hit]]
+                distances[hit] = step
+                if distances.all():
+                    break
+            sides.append((colors, distances))
+        (a, da), (b, db) = sides
+        both = (da > 0) & (db > 0)
+        weight = da[both, None] / (da[both, None] + db[both, None])
+        directional = a[both]*(1-weight) + b[both]*weight
+        mix = min(1., (coherence-.3)/.5)
+        base[py[both], px[both]] = (1-mix)*base[py[both], px[both]] + mix*directional
+    # The model can still supply restrained fine grain. Bound its amplitude by
+    # the observed background so a hallucinated crease cannot dominate the fill.
+    grain = np.clip(gen_grain * (ref / max(gen, 1.)), -ref, ref)
+    base_gray = cv2.cvtColor(base, cv2.COLOR_RGB2GRAY)
+    base_detail = (base_gray - cv2.GaussianBlur(base_gray, (0, 0), 1.5))[inside]
+    missing_energy = max(0., np.mean(src_grain[ring]**2) - np.mean(base_detail**2))
+    gain = min(1., np.sqrt(missing_energy / max(.01, np.mean(grain[inside]**2))))
+    patch = np.rint(base + gain*grain[..., None]).clip(0, 255).astype(np.uint8)
+    result = proposal.copy()
+    result[box][py, px] = patch[py, px]
+    return result
+
+
 def _masked_result(original, edited, mask, task, surface="auto"):
     if task not in ("remove","recolor"):
         return Image.composite(edited,original,mask)
@@ -86,6 +163,10 @@ def _masked_result(original, edited, mask, task, surface="auto"):
         if min(w,h) < 4:
             return Image.composite(edited,original,mask)
         color = cv2.seamlessClone(edited_rgb,original_rgb,region,(x+w//2,y+h//2),cv2.NORMAL_CLONE)
+        if surface == "auto" and matched is None:
+            bounded = _limit_texture(original_rgb, edited_rgb, np.asarray(mask))
+            if bounded is not None:
+                color = bounded
         if matched is not None:
             # Keep the natural contact shadow at the edge of the editable region.
             inside=(np.asarray(mask)>0).astype(np.uint8)
