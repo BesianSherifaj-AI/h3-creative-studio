@@ -105,7 +105,10 @@ window.StudioShell=(()=>{
       ['Film','Write or approve a storyboard',()=>selectRoom('film')],
       ['Game','Resume or branch a story',()=>selectRoom('game')],
       ['Edit','Cut, trim and mix the film',()=>selectRoom('edit')],
-      ['Audio','Add music or narration',soundtrackDialog],
+      ['Audio','Mix music and imported audio',soundtrackDialog],
+      ['Voice','Create narration and captions',()=>StudioVoice.open()],
+      ['AI clients','Connect a local assistant',()=>StudioAssistant.open()],
+      ['Examples','Open an editable workshop',()=>StudioWorkshops.open()],
       ['Media','Import a still, layer or video',addMedia],
       ['Delivery','Export the film',()=>$('#export').click()],
       ['Project','Import a legacy project',()=>window.recoverTools.open()],
@@ -130,9 +133,9 @@ window.StudioShell=(()=>{
     const sources='<details><summary>Engine installation guides and model sources</summary><div class="setup-links">'+links.map(([k,title])=>'<button type="button" data-doc="'+k+'">'+title+' ↗</button>').join('')+'</div></details>';
     const engineHelp='<section><h3>AI engines</h3><p>Connect ComfyUI for local image and motion generation, LM Studio for Film and Game writing, and UPSCALE for finishing. Choose the installed model and engine in Engines.</p>'+btn('setupEngines','Configure engines')+sources+'</section>';
     const toolHelp='<section><h3>Media tools</h3><p>'+(m.ready?'FFmpeg and FFprobe are available for editing and film export.':'Install FFmpeg and FFprobe for timeline previews, audio analysis and export. The verified 100 MiB download goes into your local Studio folder.')+'</p>'+(!m.ready&&m.can_install?btn('getMediaTools','Install media tools','primary'):'')+'</section>';
-    modal('Studio setup','<div class="setup-items">'+toolHelp+engineHelp+'<section><h3>Workspace shortcuts</h3><p>Image · V move, H pan, R rectangle, L lasso, B brush, 0 fit. Edit · Space play/pause, S split, Ctrl+Z undo.</p></section></div>');
+    modal('Studio setup','<div class="setup-items">'+toolHelp+engineHelp+'<section><h3>Assistant connection</h3><p>Pair a local MCP client with the open project.</p>'+btn('setupAssistant','Connect an AI client')+'</section><section><h3>Workspace shortcuts</h3><p>Image · V move, H pan, R rectangle, L lasso, B brush, 0 fit. Edit · Space play/pause, S split, Ctrl+Z undo.</p></section></div>');
     document.querySelectorAll('[data-doc]').forEach(b=>b.onclick=handle(async()=>{if(!await window.pywebview?.api?.open_guide(b.dataset.doc))toast('Open the engine setup links in the project README.');}));
-    on('#setupEngines',openEngines);
+    on('#setupEngines',openEngines);on('#setupAssistant',()=>StudioAssistant.open());
     on('#getMediaTools',async()=>{const result=await api('media_install');closeModal();await showQueue();await waitTask(result.task);$('#mediaSetupLabel').hidden=true;await CutRoom.refresh(true);toast('Media tools are ready.');});
   }
   document.querySelectorAll('[data-room-select]').forEach(b=>b.onclick=handle(()=>selectRoom(b.dataset.roomSelect)));
@@ -140,7 +143,7 @@ window.StudioShell=(()=>{
   on('#commands',commands);
   document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'&&!$('#dialog').open){e.preventDefault();commands();}});
   on('#director',()=>selectRoom('film'));on('#help',setup);
-  on('#openStarter',async()=>{await api('sample_open');await refresh();await selectRoom('motion');});
+  on('#openStarter',()=>StudioWorkshops.open());
   on('#toggleLibrary',()=>document.body.classList.toggle('library-closed'));
   on('#focusMonitor',()=>document.body.classList.toggle('monitor-focus'));
   $('#assetFilter').oninput=filter;

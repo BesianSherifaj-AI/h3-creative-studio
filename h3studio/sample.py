@@ -65,20 +65,21 @@ def _build(project):
                         audio_route=[None],**recipe)
         project.save_take(shot,settings,assets[key+".mp4"])
     with project.transaction() as doc:
+        doc["example_shots"] = {scene[0]: shot for scene, shot in zip(SCENES, shots)}
         doc["cut_history"] = [[{"shot":ident,"take":doc["shots"][ident]["selected_take"]} for ident in shots]]
         doc.setdefault("soundtracks",{})["listening-line"] = dict(id="listening-line",name="Listening Line",
             asset=assets["listening-line.m4a"],offset=0,gain_db=0,stream=0,track=0)
     seed_example(project,shots)
 
 
-def open_example(home):
-    folder = Path(home).resolve() / "Examples" / "Tidal Relay"
+def open_example(home, name="Tidal Relay"):
+    folder = Path(home).resolve() / "Examples" / name
     if folder.exists():
         return Project(folder)
     folder.parent.mkdir(parents=True,exist_ok=True)
     # Publish the fully populated SQLite project and hashed assets together. A competing launch can safely reopen it.
     with TemporaryDirectory(prefix=".tidal-relay-",dir=folder.parent) as temporary:
-        staged = Project.create(Path(temporary)/"project","Tidal Relay")
+        staged = Project.create(Path(temporary)/"project",name)
         _build(staged)
         try:
             os.rename(staged.folder,folder)

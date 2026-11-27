@@ -15,7 +15,7 @@ from pathlib import Path
 from PIL import Image, ImageOps
 from . import media
 from .sample import open_example
-from .runtime import guard_engines, release_idle_peers
+from .runtime import dispatch_guard, guard_engines, release_idle_peers
 from .project import Project
 
 
@@ -49,7 +49,8 @@ class Studio:
                 folder = None
         if not folder:
             self.project = open_example(self.home)
-        self.queue = Queue(self.home / 'queue', before_dispatch=lambda url:release_idle_peers(self.home,url),
+        self.queue = Queue(self.home / 'queue', guard=lambda: dispatch_guard(self.home),
+                           before_dispatch=lambda url:release_idle_peers(self.home,url),
                            check_occupancy=lambda url:release_idle_peers(self.home,url,release=False))
         self.lock = threading.RLock()
         self.stop = threading.Event()
@@ -141,6 +142,19 @@ class Studio:
             return cut_action(self,project,op,a)
         with self.lock:
             p = self.project
+            if op == "voice_render" and a.get("engine") == "local" and dispatch_guard(self.home):
+                raise ValueError("Local AI speech is paused for gaming. Audition a saved line or choose a Windows voice.")
+            if op.startswith("voice_"):
+                from .voice import action
+                return action(self, p, op, a)
+            if op == "example_list":
+                from .workshops import catalog
+                return catalog()
+            if op == "example_open":
+                from .workshops import open_lesson
+                project, target = open_lesson(self.home, a["lesson"])
+                self._switch(project)
+                return target
             if op.startswith("cut_"):
                 from .cut import cut_action
                 return cut_action(self,p,op,a)
@@ -350,6 +364,9 @@ class Studio:
             if op == 'export':
                 doc = p.state()
                 clips = []
+                tracks = int(a['audio_tracks'])
+                if not 0 <= tracks <= 8:
+                    raise ValueError('Choose between zero and eight delivery audio tracks.')
                 for shot in doc['cut']:
                     t = doc['takes'].get(doc['shots'][shot]['selected_take'])
                     if not t or not t.get('video_asset'):
@@ -359,14 +376,19 @@ class Studio:
                     if 'delivery_trim' in options:
                         item['start'],item['end'] = options['delivery_trim']
                     if options.get('audio_route'):
-                        item['audio'] = options['audio_route']
+                        route = options['audio_route'][:tracks]
+                        item['audio'] = route + [None] * (tracks - len(route))
                     clips.append(item)
-                beds = [{**b,'path':p.asset_path(b['asset'])} for b in doc.get('soundtracks',{}).values()]
+                from .voice import caption_rows
+                captions = caption_rows(doc) if a.get('captions') else []
+                beds = [{**b,'path':p.asset_path(b['asset'])} for b in doc.get('soundtracks',{}).values()
+                        if b.get('track', 0) < tracks]
                 out = Path(a['path'])
                 if out.exists():
                     raise ValueError('Choose a new export filename to preserve the existing film.')
                 return self._background('Export film',lambda cancel: media.export_film(clips,out,
                     width=int(a['width']),height=int(a['height']),fps=str(a['fps']),color=a['color'],
-                    audio_tracks=int(a['audio_tracks']),cancel=cancel,soundtracks=beds))
+                    audio_tracks=tracks,cancel=cancel,soundtracks=beds,
+                    framing=a.get('framing','fit'),captions=captions))
             from .integrations import engine_action
             return engine_action(self, p, op, a)

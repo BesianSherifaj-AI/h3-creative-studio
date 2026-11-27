@@ -12,6 +12,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
+from .assistant_bridge import AssistantBridge, UnknownTool
 
 STATIC = Path(__file__).resolve().parent / 'web'
 
@@ -24,6 +25,13 @@ class Server(ThreadingHTTPServer):
         self.cookie = secrets.token_urlsafe(32)
         super().__init__(('127.0.0.1', port), Handler)
         self.origin = 'http://127.0.0.1:' + str(self.server_port)
+        self.assistant = AssistantBridge(self)
+
+    def server_close(self):
+        if assistant := getattr(self, 'assistant', None):
+            with self.studio.lock:
+                assistant.revoke()
+        super().server_close()
 
     @property
     def url(self):
@@ -102,6 +110,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(404)
 
     def do_POST(self):
+        if self.path == '/assistant':
+            return self.assistant_request()
         if self.path != '/api' or not self.authorized() or self.headers.get('Origin',self.server.origin) != self.server.origin:
             return self.reply(403)
         try:
@@ -109,7 +119,9 @@ class Handler(BaseHTTPRequestHandler):
             if size < 1 or size > 8*1024*1024:
                 return self.reply(413)
             data = json.loads(self.rfile.read(size))
-            result = self.server.studio.action(data.pop('op'), data)
+            op = data.pop('op')
+            result = (self.server.assistant.desktop(op, data) if op.startswith('assistant_')
+                      else self.server.studio.action(op, data))
             return self.reply(200, json.dumps(result, default=str, allow_nan=False).encode())
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             return
@@ -117,3 +129,26 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(400, json.dumps({'error':'The local engine is offline. Open Engines to start the renderer or set its connection address, then try again.'}).encode())
         except Exception as error:
             return self.reply(400, json.dumps({'error':str(error) or type(error).__name__}).encode())
+
+    def assistant_request(self):
+        # Stdio adapters use a distinct bearer. Browsers and renderer workers use separate routes.
+        auth = self.headers.get('Authorization', '')
+        if self.headers.get('Origin') is not None or not auth.startswith('Bearer ') or not auth.isascii():
+            return self.reply(403, b'{"error":"Use the paired Studio client."}')
+        try:
+            size = int(self.headers.get('Content-Length', '0'))
+            if not 1 <= size <= 160 * 1024:
+                return self.reply(413, b'{"error":"Message too large."}')
+            data = json.loads(self.rfile.read(size))
+            if not isinstance(data, dict):
+                raise ValueError('Expected a Studio tool request.')
+            result = self.server.assistant.request(auth[7:], data.get('method'), data.get('params'))
+            return self.reply(200, json.dumps(result, allow_nan=False).encode())
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            return
+        except PermissionError as error:
+            return self.reply(403, json.dumps({'error': str(error)}).encode())
+        except UnknownTool as error:
+            return self.reply(400, json.dumps({'error': str(error), 'rpc_code': -32602}).encode())
+        except (ValueError, TypeError, KeyError, RecursionError) as error:
+            return self.reply(400, json.dumps({'error': str(error)}).encode())

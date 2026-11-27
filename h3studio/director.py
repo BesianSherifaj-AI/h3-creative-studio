@@ -4,7 +4,7 @@ from __future__ import annotations
 import copy
 import json
 import uuid
-from . import game
+from . import game, game_story
 
 FILM_SCHEMA = '{"title":"Film title","shots":[{"title":"Shot title","duration":5,"prompt":"Visual action, camera and audio."}]}'
 GAME_SCHEMA = '{"scene":"Narrate the observable result.","actions":["Possible next action"],"state_changes":["Proposed consequence"],"outcome":"resolved or blocked","discoveries":{"locations":[],"entities":[]},"world_effects":[]}'
@@ -92,6 +92,7 @@ def seed_example(project, shots):
         data["turns"][turn_id].setdefault("reference_shot",shots[0])
         if "game_state" not in data["turns"][turn_id]:
             data["turns"][turn_id]["game_state"]=game.initial(relay=True)
+        game_story.seed(doc,data)
         return {"board":board_id,"turn":turn_id}
 
 
@@ -214,6 +215,9 @@ def approve(project,args):
             if key not in store["turns"]:
                 saved=game.outcome(store["turns"].get(intent.get("parent")),intent,draft,key)
                 store["turns"][key] = {**draft,"parent":intent.get("parent"),"action":intent["brief"],"review":key,"game_state":saved}
+                if parent:=intent.get("parent"):
+                    store["turns"][key]["scene_visual"]=game_story.visual(doc,store["turns"][parent])
+                    store["turns"][key]["inherited_visual"]=True
                 if intent.get("resolved"):
                     store["turns"][key]["resolved_action"]={**intent["resolved"],"action":intent["brief"]}
                 store["active_turn"] = key
@@ -360,6 +364,11 @@ def _recovered_game(doc, store, story_id, branch):
 
 
 def action(studio,project,op,args):
+    if args.get("project_id") and (args["project_id"]!=project.state()["id"] or
+           args.get("project_folder",str(project.folder))!=str(project.folder)):
+        raise ValueError("The active project changed. Open the original Game or Film project.")
+    if op.startswith("director_story_"):
+        return game_story.action(project,op,args)
     if op == "director_world":
         turn=_store(project.state())["turns"][args["turn"]]
         return game.view(game.snapshot(turn))
@@ -394,6 +403,9 @@ def action(studio,project,op,args):
             if not turn.get("shot"):
                 shot = project._shot(turn["action"][:180],5)
                 shot.update(game_turn=args["turn"],director_prompt=game.visual_prompt(turn))
+                frame=game_story.visual(doc,turn)
+                if frame["revision"]: shot["guides"]=[dict(role="image",frame=0,usage="both",revision=frame["revision"])]
+                elif frame["poster"]: shot["guides"]=[dict(role="image",frame=0,usage="both",asset=frame["poster"])]
                 doc["shots"][shot["id"]] = shot
                 doc["cut"].append(shot["id"])
                 turn["shot"] = shot["id"]

@@ -212,10 +212,10 @@ function soundtrackDialog(){
   const beds=Object.values(state.doc.soundtracks||{});
   modal('Film soundtrack','<p class="note">Music and narration mix with the audio from your selected takes.</p><div class="dialog-menu">'+
     beds.map(b=>'<button data-bed="'+esc(b.id)+'">'+esc(b.name)+' · '+esc(b.offset)+' s · '+esc(b.gain_db)+' dB · track '+esc(b.track+1)+'</button>').join('')+'</div>',
-    [{label:'Add soundtrack',primary:true,run:()=>editSoundtrack(null)},{label:'Export settings',run:()=>$('#export').click()}]);
+    [{label:'Add soundtrack',primary:true,run:()=>editSoundtrack(null)},{label:'Create narration',run:()=>StudioVoice.open()},{label:'Export settings',run:()=>$('#export').click()}]);
   document.querySelectorAll('[data-bed]').forEach(b=>b.onclick=()=>editSoundtrack(state.doc.soundtracks[b.dataset.bed]));
 }
-on('#export',()=>{modal('Export film','<p class="note">'+state.doc.cut.length+' shots in timeline order</p><div class="row">'+fld('Width','ew',1920,'number')+fld('Height','eh',1080,'number')+'</div>'+sel('Delivery frame rate','ef',['24','25','30','30000/1001','60','60000/1001'],'24')+sel('Delivery color','ec',[['bt709','Rec. 709 · SDR'],['bt2020-pq','Rec. 2020 PQ · HDR']],'bt709')+fld('Audio tracks','ea',1,'number','min="0" max="8"'),[{label:'Film soundtrack',run:soundtrackDialog},{label:'Choose export file',primary:true,run:async()=>{const path=await pick('save',state.doc.name+'.mp4');if(!path)return;const r=await api('export',{path,width:+val('ew'),height:+val('eh'),fps:val('ef'),color:val('ec'),audio_tracks:+val('ea')});closeModal();toast('Exporting film…');await waitTask(r.task);toast('Film exported to '+path);}}]);});
+on('#export',()=>StudioDelivery.open());
 function projectMenu(){
   const recent=(state.preferences.recent_projects||[]).filter(path=>path!==state.folder);
   const recentList=recent.length?'<h3>Recent projects</h3><div class="dialog-menu">'+recent.map((path,i)=>'<button data-recent="'+i+'" title="'+esc(path)+'">'+esc(state.preferences.recent_labels?.[path]||path.split(/[\\/]/).pop())+'</button>').join('')+'</div>':'';

@@ -201,8 +201,29 @@ def _status(base,port,guard):
     return result
 
 
+def gaming_pause(home):
+    return (Path(home) / ".gaming-pause").is_file()
+
+
+def set_gaming_pause(home, paused):
+    if type(paused) is not bool:
+        raise ValueError("Choose Pause or Resume.")
+    marker = Path(home) / ".gaming-pause"
+    if paused:
+        marker.touch()
+    else:
+        marker.unlink(missing_ok=True)
+
+
+def dispatch_guard(home):
+    reasons = game_guard()
+    if gaming_pause(home):
+        reasons = ["Gaming pause", *reasons]
+    return reasons
+
+
 def engine_status(home,kind,config=None):
-    return _status(_base(home,kind),_port(kind,config),game_guard())
+    return _status(_base(home,kind),_port(kind,config),dispatch_guard(home))
 
 
 def _command(base,kind,settings):
@@ -256,7 +277,7 @@ def start_engine(home,kind,config=None):
     base=_base(home,kind)
     settings=installation(kind,config)
     with _lock(base):
-        status=_status(base,settings["port"],game_guard())
+        status=_status(base,settings["port"],dispatch_guard(home))
         if status["guard"]:
             return {**status,"state":"blocked","detail":"Game guard is active."}
         if status["state"] in ("ready","occupied","starting"):
@@ -317,7 +338,7 @@ def stop_engine(home,kind,config=None):
 def guard_engines(home):
     # Only look at managed engines. A fresh desktop has nothing to release.
     marked=[k for k in _PORTS if (_base(home,k)/"owner.json").is_file() and not _read(_base(home,k)).get("closed")]
-    if not marked or not game_guard():
+    if not marked or not dispatch_guard(home):
         return []
     return [stop_engine(home,k) for k in marked]
 

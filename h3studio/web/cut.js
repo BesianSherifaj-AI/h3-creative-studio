@@ -20,7 +20,7 @@
       button("cutNext","Next frame","&#9656;")+'<output id="cutClock"></output><select id="cutAudio" aria-label="Monitor audio track"></select></div></section>'+
       '<aside class="cut-inspector" id="cutProperties"></aside></div>'+
       '<section class="cut-arrangement"><header><strong>Film timeline</strong><span id="cutSummary"></span><div class="cut-tools">'+
-      button("cutImport","Add footage to the cut","Import video")+button("cutScore","Mix music, dialogue or narration","Soundtrack")+button("cutUndo","Undo timeline edit","Undo")+button("cutRedo","Redo timeline edit","Redo")+button("cutSplit","Split at playhead (S)","Split")+
+      button("cutImport","Add footage to the cut","Import video")+button("cutScore","Mix music, dialogue or narration","Soundtrack")+button("cutVoice","Create speech at the playhead","Narration")+button("cutUndo","Undo timeline edit","Undo")+button("cutRedo","Redo timeline edit","Redo")+button("cutSplit","Split at playhead (S)","Split")+
       button("cutRemove","Remove selected shot from this cut","Remove")+
       '<label class="cut-zoom">Zoom <input id="cutZoom" aria-label="Timeline zoom" type="range" min="28" max="240" step="2"></label></div></header>'+
       '<div class="cut-scroller" id="cutScroll"><div class="cut-sheet" id="cutSheet"><div class="cut-row cut-scale"><b>Time</b><div id="cutRuler" class="cut-rail"></div></div>'+
@@ -209,6 +209,7 @@
       const x=room.frame/24*room.zoom,s=q("cutScroll");if(x>s.scrollLeft+s.clientWidth-110 || x<s.scrollLeft)s.scrollLeft=Math.max(0,x-90);
     };
     q("cutImport").onclick=safe(()=>importFile("clip"));q("cutScore").onclick=safe(soundtrackDialog);
+    q("cutVoice").onclick=safe(()=>StudioVoice.open({offset:room.frame/24,shot:room.selected}));
     q("cutPlay").onclick=safe(play);
     q("cutPrev").onclick=()=>{vid.pause();seek(room.frame-1);};q("cutNext").onclick=()=>{vid.pause();seek(room.frame+1);};
     q("cutUndo").onclick=safe(()=>edit("cut_undo"));q("cutRedo").onclick=safe(()=>edit("cut_redo"));
@@ -264,5 +265,11 @@
     else if(e.code==="KeyS"&&!e.ctrlKey && canSplit()){e.preventDefault();await edit("cut_split");}
     else if(e.ctrlKey && e.code==="KeyZ"){e.preventDefault();await edit(e.shiftKey?"cut_redo":"cut_undo");}
   }));
-  window.CutRoom={open,close,refresh,reveal:shot=>refresh(false,shot)};
+  function deliveryContext(){
+    if(!room.active||!room.view)return null;
+    const clip=shown();
+    return {take:clip?.asset?clip.take:null,seconds:clip?Math.max(0,(room.frame-clip.start_frame)/24):0,
+      audioTracks:room.view.audio_tracks,shot:clip?.shot};
+  }
+  window.CutRoom={open,close,refresh,deliveryContext,reveal:shot=>refresh(false,shot)};
 })();

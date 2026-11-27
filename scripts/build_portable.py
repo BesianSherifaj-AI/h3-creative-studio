@@ -99,7 +99,7 @@ def sources(stage):
     for name in allowlist:
         path = PurePosixPath(name)
         if path.is_absolute() or ".." in path.parts: raise ValueError("Invalid source allowlist entry")
-        if not (name in ("studio.py","requirements.txt","LICENSE","README.md","THIRD_PARTY_NOTICES.md")
+        if not (name in ("studio.py","requirements.txt","LICENSE","README.md","THIRD_PARTY_NOTICES.md","scripts/local_speech.py")
                 or name.startswith(("h3studio/","vendor/","docs/"))): continue
         dest = stage / "app" / name
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -166,7 +166,7 @@ def build(output,cache):
 
 if __name__=="__main__":
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output",type=Path,default=ROOT/"dist/H3-Creative-Studio-2.0.0-Windows-x64.zip")
+    parser.add_argument("--output",type=Path,default=ROOT/"dist/H3-Creative-Studio-2.1.0-Windows-x64.zip")
     parser.add_argument("--cache",type=Path,default=ROOT/".local/release-cache")
     opts=parser.parse_args()
     build(opts.output.resolve(),opts.cache.resolve())

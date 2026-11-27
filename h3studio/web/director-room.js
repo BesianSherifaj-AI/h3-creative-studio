@@ -1,8 +1,9 @@
 'use strict';
 window.DirectorRoom=(()=>{
-  let mode=null, project=null, boardId=null, turnId=null, reviewId=null, rowIndex=0, editing=false, editVersion=0;
+  let mode=null, project=null, projectFolder=null, boardId=null, turnId=null, reviewId=null, rowIndex=0, editing=false, editVersion=0;
   let legacyId=null, legacyBranch=null;
   let inbox=[], videoJobs=[], timer=null, polling=false, displayedDoc=null;
+  let playing=null, viewpoint=null, playRequest=0;
   const drafts=new Map();
   const host=()=>document.querySelector('#directorWorkspace');
   const store=()=>state.doc.director||{boards:{},reviews:{},turns:{}};
@@ -144,7 +145,8 @@ window.DirectorRoom=(()=>{
     const draftsRemain=board.rows.some(r=>!r.shot),preferred=state.preferences.film_approval||'per_shot';
     const summary='<div class="dr-boardhead"><div><h2>'+esc(board.title)+'</h2><small>'+board.rows.length+' shots · '+board.rows.reduce((v,r)=>v+r.duration,0)+' s'+(board.author?' · '+esc(board.author):'')+'</small></div><div class="dr-actions">'+
       (draftsRemain?action('approveAll','Approve all shots')+action('renderAll','Approve and render all','',preferred==='all'):'')+
-      (board.rows.some(r=>r.shot&&!state.doc.shots[r.shot]?.locked_take)?action('renderApproved','Render approved shots'):'')+'</div></div>';
+      (board.rows.some(r=>r.shot&&!state.doc.shots[r.shot]?.locked_take)?action('renderApproved','Render approved shots'):'')+
+      action('voiceBoard','Narrate storyboard')+'</div></div>';
     let detail;
     if(editing){
       detail=field('Shot title','drTitle',selected.title)+field('Duration in seconds','drDuration',selected.duration,false,'type="number" min="3" max="15"')+
@@ -154,7 +156,7 @@ window.DirectorRoom=(()=>{
         (!locked?action('edit','Edit shot'):'')+'</div>'+preview+'<p class="dr-prose">'+esc(selected.prompt)+'</p>'+
         '<div class="dr-actions">'+(!shot?action('approve','Approve shot','',preferred==='per_shot'):'')+
         (shot&&!locked?action('render',last?'Regenerate video take':'Render shot','',true):'')+
-        (take?action('lock',locked?'Unlock take':'Lock selected take'):'')+(shot?action('timeline','Open timeline',shot.id):'')+'</div>';
+        (take?action('lock',locked?'Unlock take':'Lock selected take'):'')+(shot?action('timeline','Open timeline',shot.id):'')+action('voiceShot','Narrate shot')+'</div>';
       if(last)detail+=renderPanel(last.plan,locked);
       if(!locked){
         detail+='<details class="dr-details"><summary>Revise with Director</summary>'+field('Requested change','drChange','',true)+action('revise','Request revised shot')+'</details>';
@@ -177,7 +179,8 @@ window.DirectorRoom=(()=>{
     const clips=branchClips(path);
     return '<div class="dr-game-grid"><article class="dr-current"><div class="dr-game-marker"><small>Turn '+path.length+
       (turn.author?' · '+esc(turn.author):'')+'</small>'+(turnId!==data.active_turn?action('resumeGame','Resume this branch'):'<span class="dr-status">Current branch</span>')+'</div>'+
-      '<h2>'+esc(turn.action)+'</h2><p class="dr-narration">'+esc(turn.scene)+'</p>'+
+      '<h2>'+esc(turn.action)+'</h2><p class="dr-narration">'+esc(turn.scene)+'</p><div class="dr-actions">'+
+      action('playScene',turn.story_node||turn.author==='Studio example'?'Play Tidal Relay':'Play scene','',true)+action('voiceTurn','Narrate turn')+'</div>'+
       (turn.state_changes.length?'<ul class="dr-changes">'+turn.state_changes.map(v=>'<li>'+esc(v)+'</li>').join('')+'</ul>':'')+
       '<div class="dr-move"><h3>Next player action</h3><div class="dr-choices">'+turn.actions.map(v=>action('choice',v,v)).join('')+'</div>'+
       field('Your move','drMove','',true,'rows="2"')+'<div class="dr-actions">'+action('move','Generate next turn','',true)+action('world','World & inventory')+'</div></div></article>'+
@@ -189,8 +192,66 @@ window.DirectorRoom=(()=>{
       '<details><summary>Conversation · '+path.length+' turn'+(path.length===1?'':'s')+'</summary><div class="dr-transcript">'+transcript+'</div></details></section>';
   }
   function branchClips(path){
-    return path.map(k=>{const t=store().turns[k];return state.doc.shots[t.shot]?.selected_take||t.source_take;})
+    return path.map(k=>{const t=store().turns[k];return state.doc.shots[t.shot]?.selected_take||t.scene_visual?.take||t.source_take;})
       .filter(k=>state.doc.assets[state.doc.takes[k]?.video_asset]);
+  }
+  async function showPlay(id,point=null){
+    const ticket=++playRequest,owner=state.doc.id,folder=state.folder;
+    const scene=await api('director_story_view',{turn:id,project_id:owner,project_folder:folder});
+    if(ticket!==playRequest||mode!=='game'||owner!==state.doc.id||folder!==state.folder)return;
+    playing=scene;turnId=id;viewpoint=point;legacyId=null;reviewId=null;paint();host().scrollTop=0;
+    host().querySelector('.dr-player h2')?.focus({preventScroll:true});
+  }
+  function playRoom(){
+    const data=playing,turn=store().turns[data.turn],path=lineage(data.turn),item=viewpoint?.visual||data.visual;
+    const poster=item.revision?revUrl(item.revision):(item.poster?assetUrl(item.poster):'');
+    const scene=item.video&&item.take?'<video id="drStoryVideo" controls playsinline preload="metadata" '+(poster?'poster="'+poster+'" ':'')+'src="/take/'+encodeURIComponent(item.take)+'"></video>':
+      poster?'<img src="'+poster+'" alt="Saved scene guide">':'';
+    const buttons=data.choices.map((c,i)=>'<button data-dr="storyChoice" data-v="'+esc(c.id)+'"><kbd>'+(i+1)+'</kbd>'+esc(c.label)+'</button>').join('');
+    const points=data.waypoints.map(b=>'<button data-dr="restorePoint" data-v="'+esc(b.id)+'">'+esc(b.name)+
+      (b.source_frame!=null?' · frame '+b.source_frame:'')+'</button>').join('');
+    return '<article class="dr-player"><header><div><p class="dr-eyebrow">'+(data.node?'Tidal Relay · interactive story':'Game · scene player')+'</p><h2 tabindex="-1">'+
+      esc(data.title)+'</h2></div>'+action('endPlay','Return to director')+'</header><div class="dr-play-grid">'+
+      '<div class="dr-play-scene">'+(scene?'<div class="dr-play-media">'+scene+'</div>':'')+
+      '<div class="dr-player-context"><span>'+esc(data.place||'')+'</span><span>'+esc(data.actor)+'</span>'+
+      (data.inventory.length?'<span>Carrying '+esc(data.inventory.join(', '))+'</span>':'')+'</div>'+
+      '<p class="dr-play-narration">'+esc(turn.scene)+'</p><div class="dr-actions">'+action('voiceTurn','Narrate turn')+
+      action('bookmark','Save viewpoint')+(viewpoint&&(item.video||item.revision||item.poster)?action('pointMotion',viewpoint.motion_shot?'Open viewpoint Motion shot':'Create Motion shot from frame'):'')+
+      '</div></div><aside class="dr-play-actions"><p class="dr-eyebrow">'+
+      (data.ending?'Ending reached':data.node?'Choose your next move':'Continue this scene')+'</p>'+
+      (buttons?'<div class="dr-story-choices">'+buttons+'</div>':data.ending?'<h3>'+esc(data.title)+'</h3><p>'+esc(turn.state_changes.join(' '))+'</p>':
+        action('endPlay','Write a move with Director','',true))+
+      (data.objectives.length?'<section class="dr-goals">'+data.objectives.map(o=>'<p><small>'+esc(o.status)+'</small>'+esc(o.name)+'</p>').join('')+'</section>':'')+
+      '<section class="dr-play-tools"><div class="dr-actions">'+(path.length>1?action('playBack','Back one turn',turn.parent):'')+
+      (data.ending?action('playBack','Replay from opening',path[0]):'')+'</div>'+
+      (points?'<details open><summary>Saved viewpoints</summary><div class="dr-actions">'+points+'</div></details>':'')+
+      '<button data-dr="storyFilm">Add branch to Film · '+path.length+' shot'+(path.length===1?'':'s')+'</button>'+
+      (data.node?'<small>Uses the saved location clips for this route.</small>':'')+'</section></aside></div></article>';
+  }
+  async function speak(key,board,row,shot){
+    let text,title,speaker='Narrator',turn=null,take=null;
+    if(key==='voiceTurn'){
+      turn=turnId;const t=store().turns[turn];
+      const owner=state.doc.id,folder=state.folder;
+      const view=await api('director_story_view',{turn,project_id:owner,project_folder:folder});
+      if(mode!=='game'||turn!==turnId||state.doc.id!==owner||state.folder!==folder)return;
+      const placements=view.film_placements||[];
+      const item=placements[0]||viewpoint?.visual||view.visual;
+      text=t.scene;title=view.title;speaker=view.actor||speaker;take=item.take;shot=state.doc.shots[item.shot||t.shot];
+      if(placements.length>1){
+        modal('Choose a film occurrence',sel('Place this turn’s narration at','drVoiceOccurrence',
+          placements.map(p=>[p.shot,'Cut '+(state.doc.cut.indexOf(p.shot)+1)+' · '+p.title]),item.shot),
+          [{label:'Open narration',primary:true,run:async()=>{
+            if(state.doc.id!==owner||state.folder!==folder)throw Error('Open the original Game project.');
+            const selected=placements.find(p=>p.shot===val('drVoiceOccurrence'));
+            await window.StudioVoice.open({title,text,speaker,turn,shot:selected.shot,take:selected.take});
+          }}]);
+        return;
+      }
+    }else if(key==='voiceBoard'){
+      title=board.title;text=board.rows.map(r=>r.prompt).join('\n\n');shot=state.doc.shots[board.rows[0]?.shot];
+    }else{title=row.title;text=row.prompt;take=shot?.selected_take;}
+    return window.StudioVoice.open({title,text,speaker,shot:shot?.id||null,take,turn});
   }
   function reviewPanel(){
     const r=store().reviews[reviewId],d=r.parsed;
@@ -211,17 +272,24 @@ window.DirectorRoom=(()=>{
     if(!mode||!state.doc||!host())return;
     displayedDoc=state.doc;
     const data=store();
-    if(project!==state.doc.id){
-      project=state.doc.id;boardId=null;turnId=null;reviewId=null;legacyId=null;legacyBranch=null;rowIndex=0;editing=false;inbox=[];videoJobs=[];drafts.clear();
+    if(project!==state.doc.id||projectFolder!==state.folder){
+      playRequest++;project=state.doc.id;projectFolder=state.folder;boardId=null;turnId=null;reviewId=null;legacyId=null;legacyBranch=null;playing=null;viewpoint=null;rowIndex=0;editing=false;inbox=[];videoJobs=[];drafts.clear();
     }
     if(boardId===null || boardId&&!data.boards[boardId])boardId=Object.keys(data.boards).at(-1)||'';
     if(turnId===null || turnId&&!data.turns[turnId])turnId=data.active_turn||Object.keys(data.turns).at(-1)||'';
     if(reviewId&&!data.reviews[reviewId])reviewId=null;
     const film=mode==='film';
-    host().innerHTML='<header class="dr-header"><div><p class="dr-eyebrow">AI Director</p><h1>'+(film?'Film storyboard':'Game director')+'</h1></div>'+
-      '<div class="dr-headtools">'+savedPicker()+action('new',film?'New film':'New game')+'</div></header>'+
+    host().innerHTML=(!film&&playing)?playRoom():'<header class="dr-header"><div><p class="dr-eyebrow">AI Director</p><h1>'+(film?'Film storyboard':'Game director')+'</h1></div>'+
+      '<div class="dr-headtools">'+(!film&&!data.turns[turnId]?.story_node&&data.turns[turnId]?.author!=='Studio example'?action('openRelay','Open Tidal Relay example'):'')+savedPicker()+action('new',film?'New film':'New game')+'</div></header>'+
       '<div class="dr-layout'+(!film&&turnId&&!reviewId&&!legacyId?' dr-game-layout':'')+'"><div class="dr-main">'+(reviewId?reviewPanel():film&&boardId?filmBoard():!film&&legacyId?importedGame():!film&&turnId?game():starter())+
       '</div><aside class="dr-side">'+model()+'<section class="dr-inbox">'+inboxMarkup()+'</section></aside></div>';
+    const player=host().querySelector('#drStoryVideo');
+    if(player&&viewpoint){const seconds=viewpoint.seek_seconds??viewpoint.seconds;if(seconds)player.addEventListener('loadedmetadata',()=>{player.currentTime=seconds;},{once:true});}
+    host().onkeydown=e=>{
+      if(!playing||e.repeat||e.ctrlKey||e.altKey||e.metaKey||e.target.matches('video,input,textarea,select'))return;
+      if(/^[1-9]$/.test(e.key)){const b=host().querySelectorAll('[data-dr=storyChoice]')[Number(e.key)-1];if(b){e.preventDefault();b.click();}}
+      if(e.key==='Escape'){e.preventDefault();host().querySelector('[data-dr=endPlay]')?.click();}
+    };
     host().oninput=e=>{if(e.target.id)drafts.set(scope()+'/'+e.target.id,e.target.value);};
     host().onchange=handle(async e=>{
       const el=e.target;
@@ -254,8 +322,10 @@ window.DirectorRoom=(()=>{
     host()?.querySelector('.dr-inbox')?.scrollIntoView({block:'nearest'});
   }
   async function updated(op,args){
-    const result=await api(op,args);
+    const owner=state.doc.id,folder=state.folder,room=mode;
+    const result=await api(op,op.startsWith('director_')?{...args,project_id:owner,project_folder:folder}:args);
     await refresh();
+    if(state.doc.id!==owner||state.folder!==folder||mode!==room)throw Error('The project or room changed. Open the saved result in its original project.');
     return result;
   }
   async function prepare(id,conditioning){
@@ -264,6 +334,34 @@ window.DirectorRoom=(()=>{
   async function command(key,value,button){
     const board=store().boards[boardId],row=board?.rows[rowIndex],shot=state.doc.shots[row?.shot];
     switch(key){
+      case 'openRelay': {
+        await api('sample_open');await refresh();const root=Object.entries(store().turns).find(([,t])=>!t.parent&&t.author==='Studio example');
+        if(root)return showPlay(root[0]);break;
+      }
+      case 'playScene': return showPlay(turnId);
+      case 'endPlay': playing=null;viewpoint=null;break;
+      case 'voiceTurn':case 'voiceBoard':case 'voiceShot': return speak(key,board,row,shot);
+      case 'storyChoice':{
+        const r=await updated('director_story_choose',{turn:turnId,choice:value});return showPlay(r.turn);
+      }
+      case 'playBack':await updated('director_resume',{turn:value});return showPlay(value);
+      case 'bookmark':{
+        const item=viewpoint?.visual||playing.visual,video=$('#drStoryVideo');
+        if(video)video.pause();
+        const r=await updated('director_story_bookmark',{turn:turnId,take:item.take,waypoint:viewpoint?.id,seconds:video?.currentTime||0});
+        await showPlay(turnId,r.waypoint);toast('Viewpoint saved.');return;
+      }
+      case 'restorePoint':{
+        const r=await updated('director_story_restore',{turn:turnId,waypoint:value});return showPlay(r.turn,r.waypoint);
+      }
+      case 'pointMotion':{
+        const r=await updated('director_story_motion',{turn:turnId,waypoint:viewpoint.id});
+        return prepare(r.shot,'i2va');
+      }
+      case 'storyFilm':{
+        const r=await updated('director_story_film',{turn:turnId});boardId=r.board;rowIndex=0;playing=null;
+        await window.StudioShell.selectRoom('film');toast('Branch added to the film timeline.');return;
+      }
       case 'new': reviewId=null;editing=false;rowIndex=0;legacyId=null;if(mode==='film')boardId='';else turnId='';break;
       case 'settings': return openEngines();
       case 'profile': return profile();
@@ -363,10 +461,17 @@ window.DirectorRoom=(()=>{
     if(next!==mode){reviewId=null;editing=false;inbox=[];host().scrollTop=0;}mode=next;host().hidden=false;
     paint();poll().catch(e=>toast(e.message));clearInterval(timer);timer=setInterval(()=>poll().catch(()=>{}),2500);
   }
-  function close(){mode=null;clearInterval(timer);if(host())host().hidden=true;}
-  async function review(id){
-    const r=store().reviews[id];if(!r)return;
-    closeModal();await window.StudioShell.selectRoom(r.mode);chooseReview(id);
+  function close(){mode=null;playing=null;viewpoint=null;playRequest++;clearInterval(timer);if(host())host().hidden=true;}
+  async function playTurn(id,owner,folder){
+    if(state.doc.id!==owner||state.folder!==folder||!store().turns[id])throw Error('Reopen AI clients for this project.');
+    closeModal();await window.StudioShell.selectRoom('game');
+    if(state.doc.id===owner&&state.folder===folder)return showPlay(id);
   }
-  return {open,close,refresh(){if(displayedDoc!==state.doc)paint();},review};
+  async function review(id){
+    const r=store().reviews[id],owner=state.doc.id,folder=state.folder;if(!r)return;
+    closeModal();await window.StudioShell.selectRoom(r.mode);
+    if(state.doc.id!==owner||state.folder!==folder)return;
+    playing=null;viewpoint=null;playRequest++;chooseReview(id);
+  }
+  return {open,close,refresh(){if(displayedDoc!==state.doc)paint();},review,playTurn};
 })();

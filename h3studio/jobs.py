@@ -21,7 +21,7 @@ from vendor.prompt.resources import local_url
 
 TERMINAL = {"succeeded", "failed", "cancelled"}
 GAMES = {"rocketleague.exe", "fortniteclient-win64-shipping.exe", "valorant-win64-shipping.exe",
-         "cs2.exe", "overwatch.exe", "r5apex.exe", "cod.exe", "eldenring.exe"}
+         "cs2.exe", "overwatch.exe", "r5apex.exe", "cod.exe", "eldenring.exe", "cyberpunk2077.exe"}
 
 class DispatchWaiting(Exception):
     """A live renderer is busy or its queue cannot yet be verified."""

@@ -106,6 +106,27 @@
 .gw-edit { border-top:1px solid var(--dr-line);padding-top:9px; }
 .gw-edit summary { cursor:pointer; }
 .gw-edit .gw-fields { margin:12px 0;align-items:start; }
+.dr-player {max-width:1300px;margin:0 auto;--story-gold:#e0bc86;}
+.dr-player>header {display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:18px;}
+#directorWorkspace .dr-player h2 {font-size:clamp(27px,4cqw,47px);font-weight:620;letter-spacing:-.045em;margin:0;}
+.dr-play-grid {display:grid;grid-template-columns:minmax(0,1.65fr) minmax(215px,.85fr);gap:clamp(14px,3cqw,40px);align-items:start;}
+.dr-play-scene,.dr-play-actions {min-width:0;}
+.dr-play-media {overflow:hidden;border:1px solid var(--dr-line);background:#101416;border-radius:8px;}
+.dr-play-media :is(video,img) {display:block;width:100%;aspect-ratio:16/9;max-height:44vh;object-fit:contain;}
+.dr-player-context {display:flex;gap:6px 18px;flex-wrap:wrap;color:#b3c4c0;font-size:12px;margin:10px 0 16px;}
+.dr-play-narration {font-family:Georgia,serif;font-size:clamp(18px,2cqw,24px);line-height:1.43;color:#f0eade;margin-bottom:13px;}
+.dr-play-actions {border-top:2px solid var(--story-gold);padding:14px 0;}
+.dr-player .dr-play-actions>.dr-eyebrow {color:var(--story-gold)!important;}
+.dr-story-choices {display:grid;gap:8px;margin:12px 0 18px;}
+#directorWorkspace .dr-story-choices button {display:flex;gap:10px;align-items:center;text-align:left;line-height:1.4;padding:10px 13px;min-height:44px;border:1px solid #43504c;background:#252e2d;}
+#directorWorkspace .dr-story-choices button:is(:hover,:focus-visible){border-color:var(--story-gold);background:#333935;}
+.dr-story-choices kbd {color:var(--story-gold);font-family:inherit;font-size:11px;border:1px solid #767262;border-radius:3px;min-width:18px;text-align:center;}
+.dr-goals,.dr-play-tools {border-top:1px solid var(--dr-line);margin-top:16px;padding-top:12px;}
+.dr-goals p {font-size:13px;line-height:1.5;margin:0;}
+.dr-goals small {display:block;text-transform:uppercase;letter-spacing:.08em;}
+.dr-play-tools {display:grid;gap:12px;justify-items:start;}
+.dr-play-tools summary {cursor:pointer;color:#c9d5cb;font-size:13px;margin-bottom:6px;}
+@container (max-width:650px){.dr-play-grid {grid-template-columns:1fr;}.dr-play-media :is(video,img){max-height:32vh;}.dr-play-actions{padding-top:10px;}}
 @container (max-width:650px){.gw-cols,.gw-fields { grid-template-columns:1fr; }.gw-overview strong{font-size:13px;}}
 @container (max-width:900px){
   .dr-layout:not(.dr-game-layout) { grid-template-columns:minmax(0,1fr); }

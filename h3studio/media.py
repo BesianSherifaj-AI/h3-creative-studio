@@ -301,12 +301,20 @@ def render_storyboard(guides, output, *, frames=120, fps="24", width=768, height
 
 
 def export_film(clips, output, *, width=1920, height=1080, fps="24", color="bt709",
-                audio_tracks=1, cancel=None, soundtracks=()):
+                audio_tracks=1, cancel=None, soundtracks=(), framing="fit", captions=()):
     _dimensions(width, height)
     rate = _positive_rate(fps)
     encoder = _encode(color)
     if type(audio_tracks) is not int or not 0 <= audio_tracks <= 8 or not clips:
         raise ValueError("Choose at least one clip and zero to eight delivery audio tracks.")
+    frame_filters = {
+        "fit": [f"scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2:reset_sar=1",
+                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2"],
+        "fill": [f"scale={width}:{height}:force_original_aspect_ratio=increase:force_divisible_by=2:reset_sar=1",
+                 f"crop={width}:{height}"],
+    }
+    if framing not in frame_filters:
+        raise ValueError("Choose Fit or Center fill for delivery.")
     graph, inputs, video_labels = [], [], []
     audio_labels = [[] for _ in range(audio_tracks)]
     total, total_frames, total_samples = Fraction(0), 0, 0
@@ -335,8 +343,7 @@ def export_film(clips, output, *, width=1920, height=1080, fps="24", color="bt70
         filters = [f"trim=end={_seconds(absolute_end)}", f"setpts=PTS-({_seconds(absolute_start)})/TB",
                    f"fps=fps={rate}:start_time=0:round=up", "tpad=stop_mode=clone:stop=-1",
                    f"trim=end_frame={count}", "setpts=PTS-STARTPTS", _delivery_color(meta, color),
-                   f"scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2:reset_sar=1",
-                   f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2", "setsar=1"]
+                   *frame_filters[framing], "setsar=1"]
         graph.append(f"[{i}:{meta['video_stream']}]" + ",".join(filters) + f"[v{i}]")
         video_labels.append(f"[v{i}]")
         routing = clip.get("audio", [j if j < len(meta["audio_streams"]) else None for j in range(audio_tracks)])
@@ -386,7 +393,15 @@ def export_film(clips, output, *, width=1920, height=1080, fps="24", color="bt70
     with _output(output, [c["path"] for c in clips] + [b["path"] for b in soundtracks]) as temp, tempfile.TemporaryDirectory() as folder:
         script = Path(folder) / "filters.txt"
         script.write_text(";\n".join(graph), encoding="utf-8")
+        from .delivery import write_captions
+        subtitle = Path(folder) / "narration.srt"
+        cue_count = write_captions(subtitle, captions, float(total_frames / rate))
+        if cue_count:
+            inputs.extend(["-f", "srt", "-i", str(subtitle)])
         args = [*_ffmpeg(), "-copyts", *inputs, "-/filter_complex", str(script), "-map", "[film]"]
+        if cue_count:
+            args.extend(["-map", f"{len(clips)+sum(map(len, mixes))}:s:0", "-c:s", "mov_text",
+                         "-metadata:s:s:0", "handler_name=Narration", "-disposition:s:0", "default"])
         for j in range(audio_tracks):
             args.extend(["-map", f"[track{j}]"])
         args.extend([*encoder, "-r", str(rate), "-fps_mode", "cfr", "-color_range", "tv",
@@ -394,7 +409,7 @@ def export_film(clips, output, *, width=1920, height=1080, fps="24", color="bt70
         _run(args, cancel)
     return dict(kind="film", frames=total_frames, fps=str(rate), width=width, height=height,
                 duration=float(total_frames/rate), audio_tracks=audio_tracks, color=color,
-                cuts=cut_list, path=str(Path(output).resolve()))
+                cuts=cut_list, framing=framing, captions=cue_count, path=str(Path(output).resolve()))
 
 
 def prepare_h3_join(entries, schema):

@@ -158,11 +158,14 @@ function customDialog(){modal('Custom ComfyUI workflow',sel('Renderer','ck',['vi
 on('#director',()=>directorHome());
 function finish(){const {take}=get();modal('Finish with UPSCALE',sel('Workflow','fmode',[['auto','Automatic · per video'],['spatial','Upscale only · keep FPS'],['frames','Add frames only · keep size'],['enhance','DLSS enhancement · keep FPS'],['combined','Upscale + add frames']],'auto')+fld('Target frame rate','ffps','60')+fld('Scale factor','fscale',2,'number','step=".25"')+sel('Preserve HDR','fhdr',[['false','Off'],['true','On']],'false'),[{label:'Queue finishing',primary:true,run:async()=>{await api('finish',{take:take.id,settings:{workflow:val('fmode'),scale:+val('fscale'),target_fps:val('ffps'),preserve_hdr:val('fhdr')==='true'}});await showQueue();}}]);}
 async function showQueue(){
-  const jobs=await api('jobs');state.jobs=jobs;
+  const [jobs,protection]=await Promise.all([api('jobs'),api('guard')]);state.jobs=jobs;
   const chips=[...jobs.gpu.map(x=>({id:x.id,name:x.kind,status:x.status,info:x.message,renderer:true})),...jobs.editorial.map(x=>({id:x.id,name:x.name,status:x.state,info:x.error||x.message||x.result?.path||''}))];
   const content=chips.length?chips.map(j=>'<div class="status-card"><strong>'+esc(j.name)+'</strong><small>'+esc(j.status)+' · '+esc(j.id.slice(0,8))+'</small><div class="note">'+esc(j.info)+'</div>'+
     (j.name==='finish' && j.status==='succeeded'?'<button data-compare-job="'+esc(j.id)+'">Compare with source</button>':'')+(j.status==='succeeded'?'<button data-adopt="'+esc(j.id)+'">'+(j.name==='director'?'Review storyboard':'Open result in project')+'</button>':['completed','failed','cancelled'].includes(j.status)?'':'<button data-cancel="'+esc(j.id)+'">Cancel job</button>')+'</div>').join(''):'<p class="note">The render queue is empty.</p>';
-  modal('Render queue',content+(jobs.error?'<p class="note">'+esc(jobs.error)+'</p>':''),[{label:'Refresh',run:showQueue}]);
+  const pauseInfo='<section class="queue-pause"><div><strong>Gaming pause</strong><p>Holds queued AI jobs, interrupts active Studio inference and releases idle Studio renderers.</p></div>'+
+    btn('toggleGamingPause',protection.paused?'Resume AI':'Pause AI')+'</section>';
+  modal('Render queue',pauseInfo+content+(jobs.error?'<p class="note">'+esc(jobs.error)+'</p>':''),[{label:'Refresh',run:showQueue}]);
+  on('#toggleGamingPause',async()=>{await api('gaming_pause',{paused:!protection.paused});await guard();await showQueue();});
   document.querySelectorAll('[data-cancel]').forEach(b=>b.onclick=handle(async()=>{await api('cancel',{id:b.dataset.cancel});await showQueue();}));
   document.querySelectorAll('[data-compare-job]').forEach(b=>b.onclick=handle(()=>window.editTools.compare({job:b.dataset.compareJob})));
   document.querySelectorAll('[data-adopt]').forEach(b=>b.onclick=handle(async()=>{const r=await api('adopt',{id:b.dataset.adopt});
@@ -173,5 +176,5 @@ async function showQueue(){
 }
 on('#queue',showQueue);
 async function badge(){const s=await api('jobs');const count=[...s.gpu,...s.editorial].filter(x=>!['succeeded','completed','failed','cancelled'].includes(x.state||x.status)).length;$('#count').textContent=count;$('#count').classList.toggle('busy',count>0);}
-async function guard(){const g=await api('guard');$('#gpuStatus').textContent=g.games.length?'GPU paused · '+g.games.join(', '):'Game guard · clear';}
+async function guard(){const g=await api('guard');$('#gpuStatus').textContent=g.paused?'Gaming pause · on':g.games.length?'GPU paused · '+g.games.join(', '):'Game guard · clear';}
 window.addEventListener('DOMContentLoaded',async()=>{try{await refresh();state.layerIndex=Math.max(0,(get().rev?.layers.length||1)-1);render();await Promise.all([badge(),guard()]);}catch(e){toast(e.message);}setInterval(()=>badge().catch(()=>{}),5000);setInterval(()=>guard().catch(()=>{}),30000);},{once:true});

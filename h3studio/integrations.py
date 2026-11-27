@@ -155,6 +155,11 @@ def _archive_result(project, path, digest):
 
 
 def engine_action(studio,p,op,a):
+    if op in ('guard', 'gaming_pause'):
+        from .runtime import gaming_pause, set_gaming_pause
+        if op == 'gaming_pause':
+            set_gaming_pause(studio.home, a.get('paused'))
+        return {'games': game_guard(), 'paused': gaming_pause(studio.home)}
     doc = p.state()
     if op.startswith("recipe_"):
         from .recipes import action as recipe_action
@@ -165,8 +170,6 @@ def engine_action(studio,p,op,a):
     if op in ("prepare_master","submit_master","export_master"):
         from .assembly import master_action
         return master_action(studio,p,op,a)
-    if op=='guard':
-        return {'games':game_guard()}
     if op=='composition':
         comp = doc['compositions'][a['composition']]
         with p.transaction() as updated:

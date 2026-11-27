@@ -346,3 +346,33 @@ def test_model_setup_offline_lists_install_paths_and_reports_removed_live_models
     assert "CLIPLoader" in live["recipes"][0]["missing_nodes"]
     video=model_check.report("video",url)
     assert len(video["recipes"])==3 and "MMH3Save" in video["recipes"][2]["missing_nodes"]
+
+
+def test_cyberpunk_and_manual_gaming_pause_survive_reopen(tmp_path, monkeypatch):
+    from h3studio import jobs
+    from h3studio.application import Studio
+    from h3studio.project import Project
+    assert "cyberpunk2077.exe" in jobs.GAMES
+    games = ["Cyberpunk2077.exe"]
+    monkeypatch.setattr(runtime, "game_guard", lambda: games.copy())
+    home = tmp_path / "home"
+    project = Project.create(tmp_path / "film", "Night city")
+    studio = Studio(home, project.folder)
+    try:
+        studio.action("gaming_pause", {"paused": True})
+        assert studio.queue.guard() == ["Gaming pause", "Cyberpunk2077.exe"]
+    finally:
+        studio.close()
+    games.clear()
+    reopened = Studio(home, project.folder)
+    try:
+        assert reopened.action("guard", {})["paused"]
+        assert reopened.queue.guard() == ["Gaming pause"]
+        with pytest.raises(ValueError, match="paused for gaming"):
+            reopened.action("voice_render", {"engine": "local"})
+        with pytest.raises(ValueError, match="Pause or Resume"):
+            reopened.action("gaming_pause", {"paused": "false"})
+        reopened.action("gaming_pause", {"paused": False})
+        assert reopened.queue.guard() == []
+    finally:
+        reopened.close()

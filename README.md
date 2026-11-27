@@ -2,16 +2,30 @@
 
 Make a film in one Windows desktop app. Paint a layer, use that exact revision as a motion guide, direct a Film storyboard or an interactive Game, and cut the resulting takes together with an audio mix.
 
-**[Download H3 Creative Studio 2.0 for Windows x64](https://github.com/BesianSherifaj-AI/h3-creative-studio/releases/download/v2.0.0/H3-Creative-Studio-2.0.0-Windows-x64.zip)** · [Release notes](https://github.com/BesianSherifaj-AI/h3-creative-studio/releases/tag/v2.0.0)
+**[Download H3 Creative Studio 2.1 for Windows x64](https://github.com/BesianSherifaj-AI/h3-creative-studio/releases/download/v2.1.0/H3-Creative-Studio-2.1.0-Windows-x64.zip)** · [Release notes](https://github.com/BesianSherifaj-AI/h3-creative-studio/releases/tag/v2.1.0)
 
-![H3 Creative Studio showing the editable Tidal Relay project](docs/Motion.jpg)
+[![Watch the H3 Creative Studio tour, featuring Tidal Relay](docs/Tour.jpg)](https://github.com/BesianSherifaj-AI/h3-creative-studio/releases/download/v2.1.0/H3-Studio-Tour-landscape.mp4)
+
+[Watch in portrait](https://github.com/BesianSherifaj-AI/h3-creative-studio/releases/download/v2.1.0/H3-Studio-Tour-vertical.mp4) · [English captions](https://github.com/BesianSherifaj-AI/h3-creative-studio/releases/download/v2.1.0/H3-Studio-Tour.en.srt)
+
+The tour follows the authored *Tidal Relay* episode through the Windows app. It uses the original “Listening Line” score and synthetic narration made with the af_heart voice in [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M).
 
 ## Open the Windows app
 
 1. Extract the entire ZIP to a folder you can keep. Open **H3 Creative Studio.exe**. The ZIP includes Python and the desktop libraries. The community launcher is unsigned. The app uses Microsoft Edge WebView2 on Windows 10 or 11 x64.
-2. The first launch opens **Tidal Relay**, a ten-second editable example. Its three scenes include layered plates, frame guides, saved takes and an original soundtrack. **Example film** reopens your copy. Use the project name to open or create another project.
+2. The first launch opens **Tidal Relay**, a ten-second editable example. Its three scenes include layered plates, frame guides, saved takes and an original soundtrack. **Examples** opens eight individual lessons and can reopen your original film. Use the project name to open or create another project.
 3. If **Set up media** appears in the project bar, click it and choose **Install media tools**. Studio verifies the download and installs FFmpeg and FFprobe for this app. Film export, waveform analysis and native source-frame editing use these tools.
 4. For local AI, open **Engines** to choose an installation or connect a running renderer. **Check models** shows the exact files and folders for each recipe and checks what a connected renderer can see. For catalogued weights, the panel shows the download size and opens the exact file on the publisher’s site. Download the models for the features you want. Their size, licences and hardware requirements vary.
+
+## Play and voice Tidal Relay
+
+Open **Examples → Play Tidal Relay**. Take the field lamp to the breakwater, save a viewpoint and signal the launch. Backtrack to try a different ending. **Add branch to Film** turns the selected route into editable shots. This authored episode plays offline. A connected Director model can write additional turns.
+
+In **Edit → Narration**, type a line, select an installed Windows voice and audition the result. **Add to timeline** places the voice at the playhead with its own gain. Film shots and Game turns can send their text directly to Narration. Export standalone SRT captions or include the timed subtitle track in a landscape, square or vertical MP4. Fit keeps the whole picture. Center fill crops evenly to the chosen aspect ratio. For character voices, corrected pronunciations and optional local speech engines, see the [narration guide](docs/Narration.md).
+
+Local assistants can inspect the active project, read the current Game world and propose changes for review. Open **? → Connect an AI client**, select a permission and copy the generated MCP configuration. [Connecting AI clients](docs/AI-clients.md)
+
+Under **Queue → Pause AI**, hold new AI jobs and release idle Studio renderers while you play. Studio also detects supported games, including Cyberpunk 2077. A manual pause survives restarting Studio. Use **Resume AI** when you are ready.
 
 ## Workspaces
 
