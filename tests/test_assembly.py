@@ -1,5 +1,6 @@
 """Portable selected cuts, approval, lineage, audio phase fallback and master adoption."""
 import hashlib
+import shutil
 from types import SimpleNamespace
 
 import httpx
@@ -76,9 +77,27 @@ def test_review_reopen_dispatch_and_archive_separate_master(tmp_path,monkeypatch
     assert engine_action(studio,reopened,"adopt",{"id":job["id"]}) == saved
     assert reopened.state()["cut"] == original_cut
     assert [reopened.state()["shots"][s]["selected_take"] for s in original_cut] == takes
-    dest = tmp_path/"exported.mp4"
-    engine_action(studio,reopened,"export_master",{"master":saved["master"],"path":str(dest)})
+    def export(path):
+        return engine_action(studio,reopened,"export_master",{"master":saved["master"],"path":str(path)})
+    dest = p.folder/"exports"/"exported.mp4"
+    export(dest)
     assert dest.read_bytes() == movie.read_bytes()
+    with pytest.raises(FileExistsError):
+        export(dest)
+    with pytest.raises(ValueError,match="asset store"):
+        export(p.folder/"assets"/"new.mp4")
+    assert not (p.folder/"assets"/"new.mp4").exists()
+    race = tmp_path/"contested.mp4"
+    copy = shutil.copyfile
+    def racing_copy(src,temp):
+        copy(src,temp)
+        race.write_bytes(b"other writer")
+    with monkeypatch.context() as patch:
+        patch.setattr(shutil,"copyfile",racing_copy)
+        with pytest.raises(FileExistsError):
+            export(race)
+    assert race.read_bytes() == b"other writer"
+    assert not list(tmp_path.glob(".contested.mp4.*.part"))
     next(iter(cards.values()))["revision"] = "changed-after-review"
     with pytest.raises(ValueError,match="changed on the renderer"):
         engine_action(studio,reopened,"submit_master",args)

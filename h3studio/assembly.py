@@ -154,13 +154,22 @@ def master_action(studio, project, op, args):
     if op == "export_master":
         asset = doc["masters"][args["master"]]["asset"]
         source = project.asset_path(asset)
-        target = Path(args["path"]).resolve()
-        if target.suffix.lower() != ".mp4" or target.is_relative_to(project.folder):
-            raise ValueError("Choose an MP4 file outside the project.")
+        requested = Path(args["path"])
+        target = requested.resolve()
+        if target.suffix.lower() != ".mp4" or target.is_relative_to((project.folder / "assets").resolve()):
+            raise ValueError("Choose a new MP4 filename outside the project asset store.")
+        if target.exists() or requested.is_symlink():
+            raise FileExistsError("The export already exists. Choose a new MP4 filename.")
+        target.parent.mkdir(parents=True, exist_ok=True)
         temp = target.with_name("." + target.name + "." + uuid.uuid4().hex + ".part")
         try:
-            shutil.copyfile(source,temp)
-            os.replace(temp,target)
+            shutil.copyfile(source, temp)
+            # Windows rename fails on an existing destination. POSIX link has
+            # the same no-overwrite guarantee even if another export just won.
+            if os.name == "nt":
+                os.rename(temp, target)
+            else:
+                os.link(temp, target)
         finally:
             temp.unlink(missing_ok=True)
         return {"path":str(target)}
