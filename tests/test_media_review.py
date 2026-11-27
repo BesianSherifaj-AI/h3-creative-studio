@@ -1,12 +1,12 @@
 """Native review uses the production tracker and each sample's presentation interval."""
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
 import socket
 import subprocess
 import sys
-import time
 from types import SimpleNamespace
 
 import numpy as np
@@ -124,8 +124,9 @@ def verify_native_hold(page):
 
 @pytest.mark.skipif(os.name!="nt" or os.getenv("H3_NATIVE_UI_TESTS")!="1",
                     reason="Set H3_NATIVE_UI_TESTS=1 to launch an isolated Windows Studio window.")
-def test_native_pause_matches_encoded_frames_and_both_labels(tmp_path):
+def test_native_pause_matches_encoded_frames_and_both_labels(tmp_path,record_testsuite_property):
     playwright=pytest.importorskip("playwright.sync_api")
+    from scripts.verify_community import connect_desktop
     project,_,finish,*_=review_fixture(tmp_path)
     with socket.socket() as listener:
         listener.bind(("127.0.0.1",0));port=listener.getsockname()[1]
@@ -136,27 +137,21 @@ def test_native_pause_matches_encoded_frames_and_both_labels(tmp_path):
     proc=subprocess.Popen([str(python),str(repo/"studio.py"),"--project",str(project.folder),"--home",str(tmp_path/"home")],env=env)
     try:
         with playwright.sync_playwright() as pw:
-            deadline=time.monotonic()+25
-            while True:
-                try:
-                    browser=pw.chromium.connect_over_cdp(f"http://127.0.0.1:{port}",timeout=1200)
-                    break
-                except playwright.Error:
-                    if time.monotonic()>deadline or proc.poll() is not None:raise
-                    time.sleep(.2)
-            page=browser.contexts[0].pages[0]
+            page=connect_desktop(pw,port,proc,tmp_path/"home")
             page.wait_for_function("window.H3?.get().doc")
             page.locator("[data-pane=shot]").click()
             page.locator(f'[data-take="{finish}"]').click()
             page.locator("#compareFinish").click()
             page.wait_for_function("document.querySelector('#compareRight')?.readyState>=2 && document.querySelector('#compareLeft')?.readyState>=2")
+            holds=[]
             for target in (.34,.624999,.625,.625001,.999998,1.000002):
                 page.eval_on_selector("#compareScrub","(el,t)=>{el.value=t;el.dispatchEvent(new Event('input'));}",target)
-                verify_native_hold(page)
+                holds.append(verify_native_hold(page))
             page.locator("#comparePlay").click()
             page.wait_for_function("document.querySelector('#compareLeft').currentTime>1.42")
             page.locator("#comparePlay").click()
-            verify_native_hold(page)
+            holds.append(verify_native_hold(page))
+            record_testsuite_property("native_comparison_holds",json.dumps(holds))
     finally:
         if proc.poll() is None:proc.terminate()
         proc.wait(timeout=8)

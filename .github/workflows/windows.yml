@@ -38,6 +38,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $bin >> $env:GITHUB_PATH
       - name: Run regression suite
+        env:
+          H3_NATIVE_UI_TESTS: '1'
+          H3_CUT_RECEIPT: dist/native-edit-room
         run: python -m pytest -q --junitxml=dist/source-tests.xml
       - name: Build and compare portable ZIP with source
         if: github.event_name != 'pull_request'
@@ -104,6 +107,7 @@ jobs:
           name: verified-examples
           path: |
             dist/source-tests.xml
+            dist/native-edit-room/
             dist/community/Studio-*/verification.json
             dist/community/Studio-*/home/desktop.log
             dist/workshops/Workshops-*/home/desktop.log
