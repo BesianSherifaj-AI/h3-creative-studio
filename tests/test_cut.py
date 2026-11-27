@@ -136,6 +136,7 @@ def test_monitor_alternate_soundtrack_bus(tmp_path):
 def test_native_edit_room_playback_and_direct_manipulation(tmp_path):
     import json
     playwright=pytest.importorskip("playwright.sync_api")
+    from scripts.verify_community import connect_desktop
     project,((first,_),(second,_))=two_shots(tmp_path)
     with socket.socket() as listener:
         listener.bind(("127.0.0.1",0));port=listener.getsockname()[1]
@@ -147,15 +148,7 @@ def test_native_edit_room_playback_and_direct_manipulation(tmp_path):
     receipt={}
     try:
         with playwright.sync_playwright() as pw:
-            deadline=time.monotonic()+30
-            while True:
-                try:
-                    browser=pw.chromium.connect_over_cdp(f"http://127.0.0.1:{port}",timeout=1300)
-                    break
-                except playwright.Error:
-                    if time.monotonic()>deadline or proc.poll() is not None:raise
-                    time.sleep(.25)
-            page=browser.contexts[0].pages[0]
+            page=connect_desktop(pw,port,proc,tmp_path/"home")
             page.wait_for_function("window.H3?.get().doc")
             page.locator('[data-room-select="edit"]').click()
             page.wait_for_selector("#cutPicture img")
