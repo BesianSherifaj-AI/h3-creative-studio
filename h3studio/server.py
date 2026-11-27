@@ -4,6 +4,8 @@ import json
 import mimetypes
 import re
 import secrets
+
+import httpx
 import shutil
 from http import HTTPStatus
 from http.cookies import SimpleCookie
@@ -91,7 +93,7 @@ class Handler(BaseHTTPRequestHandler):
             if url.path.startswith(('/asset/', '/revision/', '/take/')):
                 kind, ident = url.path.strip('/').split('/')
                 return self.send_file(self.server.studio.file(kind, ident))
-            if url.path in ('/', '/studio.css', '/studio.js', '/director.js', '/engines.js', '/runtime.js', '/editor.js', '/recovery.js'):
+            if url.path in ('/', '/icons.svg', '/fonts/BarlowSemiCondensed-SemiBold.ttf') or re.fullmatch(r'/[a-z][a-z0-9-]*\.(?:js|css)', url.path):
                 return self.send_file(STATIC / ('index.html' if url.path=='/' else url.path[1:]))
             return self.reply(404)
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
@@ -111,5 +113,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, json.dumps(result, default=str, allow_nan=False).encode())
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             return
+        except httpx.ConnectError:
+            return self.reply(400, json.dumps({'error':'The local engine is offline. Open Engines to start the renderer or set its connection address, then try again.'}).encode())
         except Exception as error:
             return self.reply(400, json.dumps({'error':str(error) or type(error).__name__}).encode())

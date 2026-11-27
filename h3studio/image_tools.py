@@ -10,7 +10,7 @@ from pathlib import Path
 import httpx
 from PIL import Image, ImageOps
 
-from vendor.image_graph import workflows
+from vendor.image_graph import helpers, workflows
 from vendor.prompt import comfy_transfer as graph_tools
 from vendor.prompt.resources import local_url
 from .project import _size
@@ -300,14 +300,64 @@ def _inputs(project, spec, revision, args):
     return original.resize((spec["width"],spec["height"]),Image.Resampling.LANCZOS), mask
 
 
+def prepare_helper(studio, project, args, doc):
+    revision = doc["revisions"].get(args.get("revision"))
+    if not revision:
+        raise ValueError("Select a saved image to work on.")
+    ident = str(uuid.uuid4())
+    source = project.render_revision(revision["id"])
+    model = args["model"]
+    settings = dict(model=model,task=args["task"],source_revision=revision["id"],
+                    seed=_int(args.get("seed",0),0,2**53-1,"Seed"))
+    if model == "sam":
+        prompt = args.get("prompt", "")
+        if not isinstance(prompt,str) or len(prompt)>1000:
+            raise ValueError("Describe the object to select in up to 1000 characters.")
+        positive=args.get("positive_points",[])
+        negative=args.get("negative_points",[])
+        if positive or negative:
+            if not positive or any(not isinstance(points,list) or len(points)>64 for points in (positive,negative)):
+                raise ValueError("Choose at least one included point and up to 64 points per group.")
+            for point in positive+negative:
+                if (not isinstance(point,dict) or set(point)!={"x","y"} or
+                    any(type(v) is not int or not 0<=v<limit for v,limit in ((point["x"],source.width),(point["y"],source.height)))):
+                    raise ValueError("Select points inside the original image.")
+            if prompt.strip():
+                raise ValueError("Choose phrase selection or point selection.")
+            settings.update(positive_points=positive,negative_points=negative)
+        elif not prompt.strip():
+            raise ValueError("Describe the object to select or mark an included point.")
+        settings.update(prompt=prompt,width=source.width,height=source.height,
+                        previous=(doc.get("image_selections",{}).get(revision["id"]) or {}).get("asset"))
+    else:
+        scale = _int(args.get("scale",2),2,4,"Scale")
+        w,h = source.width*scale,source.height*scale
+        _size(w,h)
+        settings.update(scale=scale,width=w,height=h)
+    base = local_url(studio.prefs["image_url"])
+    with httpx.Client(trust_env=False,timeout=60) as client:
+        response = client.get(base+"/object_info")
+        response.raise_for_status()
+        schema = response.json()
+        path = _upload(client,base,"h3creative/"+ident,"source.png",source)
+        graph = helpers.build(settings,path,ident)
+        _image_defaults(graph,schema,{path})
+    return studio.queue.enqueue("image",dict(comfy_url=base,prompt=graph,studio_project=doc["id"],
+                               image_spec=settings,studio_revision=revision["id"]),ident)
+
+
 def prepare_image(studio, p, a, doc):
     model, task = a["model"], a["task"]
+    if (model,task) in (("sam","select"), ("seedvr2","upscale")):
+        return prepare_helper(studio,p,a,doc)
     if model not in workflows.REGISTRY or task not in workflows.REGISTRY[model]["tasks"]:
         raise ValueError("The selected model does not implement this image operation.")
     prompt = a.get("prompt","")
     if not isinstance(prompt,str) or not prompt.strip() or len(prompt)>6000:
         raise ValueError("Enter an image prompt of up to 6000 characters.")
     spec = dict(model=model,task=task,prompt=prompt,seed=_int(a.get("seed",0),0,2**53-1,"Seed"))
+    if a.get("visual_note") in doc.get("visual_notes",{}):
+        spec["visual_note"]=a["visual_note"]
     if task == "remove":
         spec["surface"] = a.get("surface","auto")
         if spec["surface"] not in ("auto","texture"):
@@ -369,6 +419,8 @@ def prepare_image(studio, p, a, doc):
 def adopt_image(studio, p, pl, receipt, job):
     if previous := p.state().get("image_jobs",{}).get(job["id"]):
         return {"revision":previous}
+    if previous := p.state().get("selection_jobs",{}).get(job["id"]):
+        return {"revision":previous}
     outputs = receipt.get("outputs") or []
     spec = pl.get("image_spec",{})
     layered = spec.get("task") == "layers"
@@ -400,6 +452,20 @@ def adopt_image(studio, p, pl, receipt, job):
                 raise ValueError("Qwen decomposition returned a layer without alpha.")
             rendered = output.convert("RGBA")
         raw.append(record["id"])
+        if spec.get("task") == "select":
+            mask = rendered.convert("L")
+            bounds = mask.getbbox()
+            if not bounds:
+                raise ValueError("SAM found no matching pixels. Try a different object description.")
+            asset = _store(p,_png(mask),"Semantic selection.png")
+            rev = spec["source_revision"]
+            with p.transaction() as doc:
+                selections = doc.setdefault("image_selections",{})
+                if (selections.get(rev) or {}).get("asset") != spec.get("previous"):
+                    raise ValueError("The image selection changed after this job started. Prepare a new selection.")
+                selections[rev] = {"asset":asset,"bounds":list(bounds),"job_id":job["id"],"prompt":spec["prompt"]}
+                doc.setdefault("selection_jobs",{})[job["id"]] = rev
+            return {"revision":rev}
         if rendered.size != canvas:
             rendered = rendered.resize(canvas,Image.Resampling.LANCZOS)
         if layered and i == 0:

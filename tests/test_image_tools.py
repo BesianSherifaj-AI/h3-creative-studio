@@ -224,3 +224,29 @@ def test_small_texture_repair_continues_slanted_ribs_and_keeps_protected_pixels(
     flat = np.broadcast_to(np.median(clean[~target], axis=0), clean.shape)
     assert error(automatic) < min(error(kept), error(flat)) * .65
     assert np.corrcoef(automatic[:, :, 0][target], clean[:, :, 0][target])[0, 1] > .85
+
+
+def test_semantic_selection_is_portable_idempotent_and_protects_newer_edits(case,tmp_path):
+    studio,project,revision,_,catalog=case
+    def node(inputs,outputs):
+        return {"input":{"required":{name:[kind] for name,kind in inputs.items()}},"output":outputs}
+    catalog.update({
+        "CheckpointLoaderSimple":node({"ckpt_name":[tools.helpers.SAM]},["MODEL","CLIP","VAE"]),
+        "CLIPTextEncode":node(dict(clip="CLIP",text="STRING"),["CONDITIONING"]),
+        "SAM3_Detect":node(dict(model="MODEL",image="IMAGE",conditioning="CONDITIONING",threshold="FLOAT",
+                                refine_iterations="INT",individual_masks="BOOLEAN"),["MASK"]),
+        "MaskToImage":node(dict(mask="MASK"),["IMAGE"]),
+    })
+    request=dict(task="select",model="sam",revision=revision,prompt="the lighthouse")
+    queued=[tools.prepare_image(studio,project,request,project.state()) for _ in range(2)]
+    first,late=[studio.queue.get(job["id"],full=True) for job in queued]
+    mask=Image.new("L",(64,48))
+    mask.paste(255,(11,8,31,28))
+    receipt={"outputs":[output(tmp_path/"selection.png",mask)]}
+    result=tools.adopt_image(studio,project,first["payload"],receipt,first)
+    assert result=={"revision":revision}
+    assert tools.adopt_image(studio,project,first["payload"],{},first)==result
+    saved=Project(project.folder).state()["image_selections"][revision]
+    assert saved["bounds"]==[11,8,31,28] and saved["prompt"]=="the lighthouse"
+    with pytest.raises(ValueError,match="selection changed"):
+        tools.adopt_image(studio,project,late["payload"],receipt,late)

@@ -1,17 +1,49 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>H3 Creative Studio</title><link rel="stylesheet" href="/studio.css"><script defer src="/studio.js"></script><script defer src="/runtime.js"></script><script defer src="/director.js"></script><script defer src="/engines.js"></script><script defer src="/editor.js"></script><script defer src="/recovery.js"></script></head>
-<body><header class="top"><div class="identity"><b class="mark">H3</b><strong>Creative Studio</strong></div><span class="divider"></span><button id="projectMenu" class="project-name" title="Project menu">Project ▾</button><div class="top-actions"><button id="engines">Engines</button><button id="queue">Queue <span id="count">0</span></button><button id="export" class="primary">Export film ↗</button></div></header>
-<main class="layout"><aside class="library"><div class="section-title"><span>PROJECT LIBRARY</span><button id="addMedia" title="Import media">＋</button></div><h2 id="libraryName">Film</h2><div class="eyeline">Compositions</div><div id="comps"></div><div class="eyeline">Shots <button id="newShot" title="New shot">＋</button></div><div id="shots"></div><div class="library-foot"><button id="director" class="wide">✧ &nbsp; AI Director</button><button id="recovery">Import legacy project</button></div></aside>
-<section class="work"><div class="work-head"><div><div class="eyeline" id="workType">COMPOSITION</div><h1 id="compName">Canvas</h1></div><div class="segmented"><button id="canvasTab" class="active">Canvas</button><button id="takeTab">Take</button></div></div>
-<div id="stage"><div id="emptyArt">Import a still or open a project to start editing.</div><img id="canvasImage" alt="Layered composition preview" draggable="false" hidden><video id="player" controls playsinline hidden></video></div>
-<div class="canvas-info"><span id="canvasMeta"></span><span id="revisionMeta"></span></div>
-<section class="timeline"><div class="timeline-head"><div><div class="eyeline">SHOT TIMELINE</div><h2 id="shotName">Select a shot</h2></div><div class="time-read"><b id="timecode">00:00.00</b><small>24 FPS</small></div></div>
-<div id="track"><div class="ruler"></div><div id="markers"></div><i id="playhead"></i></div>
-<input id="scrubber" type="range" min="0" max="119" value="0" aria-label="Displayed frame">
-<div class="track-footer"><span id="frameLabel">Frame 0</span><span id="durationLabel">5.00 s</span></div>
-<div class="timeline-tools"><button id="guide">＋ Place guide</button><button id="mediaGuide">Media guide</button><button id="preview" class="soft">▷ Render storyboard</button></div>
-</section></section>
-<aside class="inspector"><div class="section-title">INSPECTOR</div><div class="tabs"><button data-pane="layers" class="active">Layers</button><button data-pane="shot">Shot</button><button data-pane="ai">Generate</button></div><div id="pane"></div></aside></main>
-<footer><span><i class="dot"></i><b id="projectStatus">Local project</b></span><span id="gpuStatus">Checking game guard…</span></footer>
-<dialog id="dialog"><form method="dialog" id="dialogForm"><div class="dialog-head"><h2 id="dialogTitle"></h2><button type="button" id="closeDialog" aria-label="Close">×</button></div><div id="dialogBody"></div><div id="dialogError" role="alert"></div><div id="dialogFoot"></div></form></dialog>
-<div id="toast" role="status" hidden></div></body></html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>H3 Creative Studio</title>
+<link rel="stylesheet" href="/studio.css">
+<link rel="stylesheet" href="/shell.css">
+<link rel="stylesheet" href="/image-room.css">
+<link rel="stylesheet" href="/director-room.css">
+<link rel="stylesheet" href="/cut.css">
+<script src="/studio.js" defer></script>
+<script src="/runtime.js" defer></script>
+<script src="/director.js" defer></script>
+<script src="/engines.js" defer></script>
+<script src="/editor.js" defer></script>
+<script src="/recovery.js" defer></script>
+<script src="/image-room.js" defer></script>
+<script src="/image-director.js" defer></script>
+<script src="/game-world.js" defer></script>
+<script src="/director-room.js" defer></script>
+<script src="/cut.js" defer></script>
+<script src="/shell.js" defer></script></head>
+<body data-room="motion">
+<header class="top">
+  <div class="identity"><span class="brand-mark" aria-hidden="true">H<span>3</span></span><strong>Creative Studio</strong></div>
+  <nav class="rooms" aria-label="Workspace"><button data-room-select="image" type="button" aria-pressed="false" title="Image workspace"><svg class="icon" aria-hidden="true"><use href="/icons.svg#image"/></svg><span>Image</span></button><button data-room-select="motion" type="button" aria-pressed="true" title="Motion workspace"><svg class="icon" aria-hidden="true"><use href="/icons.svg#aperture"/></svg><span>Motion</span></button><button data-room-select="film" type="button" aria-pressed="false" title="Film workspace"><svg class="icon" aria-hidden="true"><use href="/icons.svg#clapperboard"/></svg><span>Film</span></button><button data-room-select="game" type="button" aria-pressed="false" title="Game workspace"><svg class="icon" aria-hidden="true"><use href="/icons.svg#gamepad-2"/></svg><span>Game</span></button><button data-room-select="edit" type="button" aria-pressed="false" title="Edit workspace"><svg class="icon" aria-hidden="true"><use href="/icons.svg#scissors"/></svg><span>Edit</span></button></nav>
+  <div class="top-actions"><button id="engines" title="Configure engines"><svg class="icon" aria-hidden="true"><use href="/icons.svg#cpu"/></svg><span>Engines</span></button><button id="queue" title="Render queue"><svg class="icon" aria-hidden="true"><use href="/icons.svg#list-video"/></svg><span>Queue</span><b id="count">0</b></button><button id="export" class="primary"><svg class="icon" aria-hidden="true"><use href="/icons.svg#upload"/></svg><span>Export film</span></button></div>
+</header>
+<div class="project-bar"><button id="toggleLibrary" class="icon-button" title="Toggle project library" aria-label="Toggle project library"><svg class="icon" aria-hidden="true"><use href="/icons.svg#panel-left-close"/></svg></button><span class="project-crumb">Project</span><span class="crumb-slash">/</span><button id="projectMenu" class="project-name" title="Project menu">Open project</button><div class="project-bar-end"><button id="commands" title="Find a Studio tool (Ctrl+K)" aria-label="Find a Studio tool"><svg class="icon" aria-hidden="true"><use href="/icons.svg#search"/></svg><span>Tools</span></button><button id="openStarter" title="Open the included three-shot example"><svg class="icon" aria-hidden="true"><use href="/icons.svg#clapperboard"/></svg><span>Example film</span></button><button id="help" title="Studio setup and shortcuts" aria-label="Studio setup and shortcuts"><svg class="icon" aria-hidden="true"><use href="/icons.svg#circle-help"/></svg><span id="mediaSetupLabel" hidden>Set up media</span></button></div></div>
+<main class="layout">
+<aside class="library"><div class="panel-heading"><div class="panel-icon"><svg class="icon" aria-hidden="true"><use href="/icons.svg#library"/></svg></div><h2>Project library</h2><button id="addMedia" class="icon-button plus" title="Import media" aria-label="Import media"><svg class="icon" aria-hidden="true"><use href="/icons.svg#plus"/></svg></button></div>
+<label class="asset-search"><svg class="icon" aria-hidden="true"><use href="/icons.svg#search"/></svg><input id="assetFilter" aria-label="Filter project library" placeholder="Find media or shots"></label>
+<div id="libraryName" hidden></div><div class="eyeline library-section">Compositions <span id="compCount"></span></div><div id="comps"></div>
+<div class="eyeline library-section">Shot bin <button id="newShot" class="icon-button" title="New shot" aria-label="New shot"><svg class="icon" aria-hidden="true"><use href="/icons.svg#plus"/></svg></button></div><div id="shots"></div>
+<div id="binEmpty" hidden class="note">No matching media or shots.</div>
+<div class="library-foot"><button id="director"><svg class="icon" aria-hidden="true"><use href="/icons.svg#clapperboard"/></svg>Film storyboard</button><button id="recovery"><svg class="icon" aria-hidden="true"><use href="/icons.svg#history"/></svg>Import legacy project</button></div></aside>
+<section class="work" aria-label="Shot workspace">
+  <div class="work-head"><div class="work-title"><div class="eyeline" id="workType">Shot monitor</div><h1 id="compName">Canvas</h1></div><div class="segmented" aria-label="Monitor source"><button id="canvasTab" class="active">Canvas</button><button id="takeTab">Take</button></div></div>
+  <div id="imageRoomTools" hidden></div>
+  <div id="stage"><div id="emptyArt">Import a still or open a project to start editing.</div><img id="canvasImage" alt="Layered composition preview" draggable="false" hidden><video id="player" controls playsinline hidden></video></div>
+  <div class="canvas-info"><span><svg class="icon" aria-hidden="true"><use href="/icons.svg#monitor"/></svg><b id="canvasMeta"></b></span><span><b id="revisionMeta"></b><button id="focusMonitor" class="icon-button" title="Expand monitor" aria-label="Expand monitor"><svg class="icon" aria-hidden="true"><use href="/icons.svg#maximize-2"/></svg></button></span></div>
+  <section class="timeline"><div class="timeline-head"><div><div class="eyeline">Frame controls</div><h2 id="shotName">Select a shot</h2></div><div class="time-read"><b id="timecode">00:00.00</b><small>24 FPS</small></div></div>
+  <div id="track"><div class="ruler"></div><div id="markers"></div><i id="playhead"></i></div>
+  <input id="scrubber" type="range" min="0" max="119" value="0" aria-label="Displayed frame"><div class="track-footer"><span id="frameLabel">Frame 0</span><span id="durationLabel">5.00 s</span></div>
+  <div class="timeline-tools"><button id="guide"><svg class="icon" aria-hidden="true"><use href="/icons.svg#plus"/></svg>Place guide</button><button id="mediaGuide"><svg class="icon" aria-hidden="true"><use href="/icons.svg#file-image"/></svg>Media guide</button><button id="preview" class="soft"><svg class="icon" aria-hidden="true"><use href="/icons.svg#play"/></svg>Render storyboard</button></div></section>
+</section>
+<aside class="inspector"><div class="panel-heading"><svg class="icon" aria-hidden="true"><use href="/icons.svg#sliders-horizontal"/></svg><h2>Inspector</h2></div><div class="tabs" aria-label="Inspector panels"><button data-pane="layers">Layers</button><button data-pane="shot">Takes</button><button data-pane="ai" class="active">Generate</button></div><div id="pane"></div></aside>
+<section id="directorWorkspace" hidden></section><section id="cutWorkspace" hidden></section>
+</main>
+<footer><span><i class="dot"></i><b id="projectStatus">Local project</b></span><span id="footerRoom">Motion</span><span id="gpuStatus">Checking engines…</span></footer>
+<dialog id="dialog"><form method="dialog" id="dialogForm"><div class="dialog-head"><h2 id="dialogTitle"></h2><button type="button" id="closeDialog" aria-label="Close">×</button></div><div id="dialogBody"></div><div id="dialogError" role="alert"></div><div id="dialogFoot"></div></form></dialog><div id="toast" role="status" hidden></div>
+</body></html>

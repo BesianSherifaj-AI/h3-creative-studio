@@ -48,6 +48,20 @@ def engine_action(studio, op, args):
     kind = args.get("kind")
     if kind is not None and kind not in KINDS:
         raise ValueError("Choose the image or video renderer.")
+    if op == "check_models":
+        from .model_check import report
+        if kind not in KINDS:
+            raise ValueError("Choose the image or video renderer.")
+        return report(kind,args.get("url") or studio.prefs[kind+"_url"])
+    if op == "director_models":
+        import httpx
+        from vendor.prompt.resources import local_url
+        base = local_url(args.get("url") or studio.prefs["director_url"])
+        with httpx.Client(trust_env=False,timeout=4) as client:
+            response = client.get(base+"/v1/models")
+            response.raise_for_status()
+        models = sorted({m["id"] for m in response.json().get("data",[]) if isinstance(m,dict) and isinstance(m.get("id"),str)})
+        return {"models":models}
     if op == "engine_status":
         if kind:
             return _describe(studio, kind)

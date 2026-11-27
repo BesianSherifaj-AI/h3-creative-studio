@@ -14,7 +14,7 @@ from pathlib import Path
 
 from PIL import Image, ImageOps
 from . import media
-from .demo import create_demo
+from .sample import open_example
 from .runtime import guard_engines, release_idle_peers
 from .project import Project
 
@@ -28,15 +28,16 @@ def atomic_json(path, value):
 class Studio:
     def __init__(self, home, project=None):
         from .jobs import Queue
+        from . import community
         self.home = Path(home).resolve()
         self.home.mkdir(parents=True, exist_ok=True)
+        community.configure(self.home)
         self.prefs_path = self.home / 'preferences.json'
         self.prefs = {'video_url':'http://127.0.0.1:8021','image_url':'http://127.0.0.1:8022',
                       'director_url':'http://127.0.0.1:1234','director_model':'', 'finishing_install':''}
         if self.prefs_path.is_file():
             self.prefs.update(json.loads(self.prefs_path.read_text(encoding='utf-8')))
         folder = project or self.prefs.get('last_project')
-        demo = self.home / 'Projects' / 'Copper Orbit'
         self.startup_notice = ''
         if folder:
             try:
@@ -47,7 +48,7 @@ class Studio:
                 self.startup_notice = 'The last project could not be opened. Use Open project to locate it.'
                 folder = None
         if not folder:
-            self.project = Project(demo) if (demo / Project.DATABASE).is_file() else create_demo(demo)
+            self.project = open_example(self.home)
         self.queue = Queue(self.home / 'queue', before_dispatch=lambda url:release_idle_peers(self.home,url),
                            check_occupancy=lambda url:release_idle_peers(self.home,url,release=False))
         self.lock = threading.RLock()
@@ -74,9 +75,9 @@ class Studio:
                 self.last_error = str(e)
 
     def _switch(self, p):
+        previous = str(self.project.folder)
         self.project = p
         path = str(p.folder)
-        previous = self.prefs.get('last_project') or str(self.home / 'Projects' / 'Copper Orbit')
         recent = [path, previous, *self.prefs.get('recent_projects',[])]
         self.prefs['recent_projects'] = list(dict.fromkeys(recent))[:8]
         labels = dict(self.prefs.get('recent_labels',{}))
@@ -110,7 +111,7 @@ class Studio:
     def _tasks(self):
         return [{'id':i, **{k:v for k,v in info.items() if k!='cancel'}} for i,info in reversed(list(self.tasks.items()))]
 
-    def _background(self, name, fn):
+    def _background(self, name, fn, *, with_progress=False):
         ident = uuid.uuid4().hex
         cancel = threading.Event()
         info = {'name':name, 'state':'queued', 'cancel':cancel}
@@ -120,7 +121,12 @@ class Studio:
             try:
                 if cancel.is_set():
                     raise InterruptedError('Cancelled.')
-                info['result'] = fn(cancel.is_set)
+                if with_progress:
+                    def report(percent, message):
+                        info.update(progress=percent, message=message)
+                    info['result'] = fn(cancel.is_set,report)
+                else:
+                    info['result'] = fn(cancel.is_set)
                 info['state'] = 'completed'
             except Exception as e:
                 info.update(state='cancelled' if cancel.is_set() else 'failed', error=str(e))
@@ -128,10 +134,33 @@ class Studio:
         return {'task':ident}
 
     def action(self, op, a):
+        if op=="cut_strip":
+            from .cut import cut_action
+            with self.lock:
+                project=self.project
+            return cut_action(self,project,op,a)
         with self.lock:
             p = self.project
+            if op.startswith("cut_"):
+                from .cut import cut_action
+                return cut_action(self,p,op,a)
+            if op.startswith("image_room_"):
+                from .image_room import action
+                return action(self, p, op.removeprefix("image_room_"), a)
+            if op == 'sample_open':
+                self._switch(open_example(self.home))
+                return self.state()
             if op == 'state':
                 return self.state()
+            if op in ('community_status','media_install'):
+                from . import community
+                if op == 'community_status':
+                    return community.status(self.home)
+                for ident, task in self.tasks.items():
+                    if task['name']=='Install media tools' and task['state'] in ('queued','running'):
+                        return {'task':ident}
+                return self._background('Install media tools',lambda cancel,progress:
+                    community.install(self.home,cancel,progress),with_progress=True)
             if op == 'jobs':
                 return {'editorial':self._tasks(), 'gpu':self.queue.list(), 'error':self.last_error}
             if op == 'cancel':
@@ -140,13 +169,21 @@ class Studio:
                 else:
                     self.queue.cancel(a['id'])
                 return {}
-            if op in ('engine_status','start_engine','stop_engine','engine_config','engine_settings'):
+            if op in ('engine_status','start_engine','stop_engine','engine_config','engine_settings','director_models','check_models'):
                 from .engine_controls import engine_action
                 return engine_action(self,op,a)
             if op == 'settings':
                 if 'film_approval' in a and a['film_approval'] not in ('storyboard','per_shot','all'):
                     raise ValueError('Choose a Film approval mode.')
                 keys = ('video_url','image_url','director_url','director_model','finishing_install','film_approval')
+                for mode in ('film','game'):
+                    prefix=mode+'_director_'
+                    keys+=tuple(prefix+k for k in ('url','model','instructions'))
+                    if a.get(prefix+'url'):
+                        from vendor.prompt.resources import local_url
+                        local_url(a[prefix+'url'])
+                    if len(a.get(prefix+'instructions',''))>4000 or len(a.get(prefix+'model',''))>1000:
+                        raise ValueError('Use a shorter Director profile.')
                 self.prefs.update({k:str(a[k]).strip() for k in keys if k in a})
                 atomic_json(self.prefs_path, self.prefs)
                 return self.state()

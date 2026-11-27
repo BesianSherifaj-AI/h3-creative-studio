@@ -130,3 +130,84 @@ def test_structured_correction_and_legacy_receipt(setup):
     rid=reply(legacy,"Lantern in fog.")
     call("director_approve",review=rid)
     assert p.state()["director"]["boards"][rid]["rows"][0]["prompt"]=="Lantern in fog."
+
+
+def test_room_edits_game_render_and_scoped_inbox(setup):
+    p,studio,call,reply=setup
+    film_job=call("director",mode="film",prompt="Cut across the harbor",count=2)
+    board=reply(film_job,film())
+    assert [j["id"] for j in call("director_inbox",mode="film")]==[film_job["id"]]
+    assert not call("director_inbox",mode="game")
+    other=Project.create(p.folder.parent/"other","Other project")
+    assert not engine_action(studio,other,"director_inbox",{"mode":"film"})
+    call("director_edit",board=board,row=1,version=0,title="Close up",duration=5,prompt="The lamp answers.")
+    call("director_approve",review=board)
+    row=p.state()["director"]["boards"][board]["rows"][1]
+    assert p.state()["shots"][row["shot"]]["director_prompt"]=="The lamp answers."
+    with pytest.raises(ValueError,match="changed"):
+        call("director_edit",board=board,row=1,version=0,title="Lost update",duration=5,prompt="Old revision.")
+    rev=p.save_composition("Guide",32,32,[])
+    p.set_guides(row["shot"],[{"role":"last","frame":119,"revision":rev}])
+    with pytest.raises(ValueError,match="beyond"):
+        call("director_edit",board=board,row=1,version=1,title="Short",duration=3,prompt="Too short.")
+    first=p.save_take(row["shot"],{"seed":1})
+    call("director_lock",board=board,row=1,take=first,locked=True)
+    with pytest.raises(ValueError,match="locked"):
+        call("director_edit",board=board,row=1,version=1,title="Locked",duration=5,prompt="Other.")
+    game_job=call("director",mode="game",prompt="Take the lamp.")
+    turn=reply(game_job,{"scene":"The lamp glows green.","actions":["Raise it"],"state_changes":["The lamp is lit."]})
+    call("director_approve",review=turn)
+    game_shot=call("director_game_shot",turn=turn)["shot"]
+    assert call("director_game_shot",turn=turn)["shot"]==game_shot
+    ticket=str(uuid.uuid4())
+    first_game=call("director_game_render",turn=turn,request_id=ticket,mode="t2va")
+    assert call("director_game_render",turn=turn,request_id=ticket,mode="t2va")["id"]==first_game["id"]
+    second_game=call("director_game_render",turn=turn,request_id=str(uuid.uuid4()),mode="t2va")
+    one,two=[studio.queue.get(j["id"],full=True)["payload"] for j in (first_game,second_game)]
+    assert one["studio_shot"]==two["studio_shot"]==game_shot and one["manifest"]["seed"]!=two["manifest"]["seed"]
+    assert p.state()["director"]["turns"][turn]["renders"]==[one["studio_plan"],two["studio_plan"]]
+
+
+def test_authored_starter_board_and_playable_game(setup):
+    from h3studio.director import seed_example
+    p,_,call,_=setup
+    shots=[p.add_shot(n,5) for n in ("The listening station","The receiver","Beyond the breakwater")]
+    seed=seed_example(p,shots)
+    assert seed==seed_example(Project(p.folder),shots)
+    d=p.state()["director"]
+    board,turn=d["boards"][seed["board"]],d["turns"][seed["turn"]]
+    assert [r["shot"] for r in board["rows"]]==shots and board["author"]==turn["author"]=="Studio example"
+    assert turn["parent"] is None and d["active_turn"]==seed["turn"] and len(turn["actions"])==3 and not d["reviews"]
+    assert call("director_approve",review=seed["board"])["board"]==seed["board"]
+    call("director_edit",board=seed["board"],row=2,version=0,title="Across the sea",duration=4,prompt="A blue beacon answers.")
+    assert Project(p.folder).state()["shots"][shots[2]]["name"]=="Across the sea"
+    job=call("director",mode="game",parent=seed["turn"],prompt=turn["actions"][1])
+    assert call("director_inbox",mode="game")[0]["id"]==job["id"]
+
+
+def test_recovered_game_preserves_shared_prefix_dialogue_source_take_and_archive(setup,tmp_path):
+    from h3studio.recovery import import_legacy
+    p,studio,call,_=setup
+    root=tmp_path/"old-library"
+    (root/"stories").mkdir(parents=True)
+    story={"id":"harbor","title":"Return to the reef","mode":"game","premise":"One lamp is burning.",
+           "active_branch_id":"east","branches":{"east":["a","b"],"west":["a","c"],"damaged":["missing"]},
+           "turns":[{"run_id":r,"message":r,"plan":{"action":"Walk "+r,"dialogue":[{"speaker":"Keeper","text":"Welcome"}],
+                     "final_state":"At "+r,"choices":[{"title":"Listen","message":"Hear the signal"}]}} for r in "abc"]}
+    (root/"stories/harbor.json").write_text(json.dumps(story),encoding="utf-8")
+    import_legacy(p,root)
+    legacy=p.state()["legacy"]
+    east=call("director_resume_import",story="harbor",branch="east")["turn"]
+    west=call("director_resume_import",story="harbor",branch="west")["turn"]
+    assert call("director_resume_import",story="harbor",branch="east")["turn"]==east
+    data=Project(p.folder).state()["director"]
+    assert len(data["turns"])==4 and data["turns"][east]["parent"]==data["turns"][west]["parent"]
+    end=data["turns"][east]
+    assert "Keeper: Welcome" in end["scene"] and end["state_changes"]==["At b"]
+    assert end["source_take"]==legacy["cuts"]["story:harbor:east"][-1]["take"]
+    j=call("director",mode="game",parent=east,prompt=end["actions"][0])
+    prompt=studio.queue.get(j["id"],full=True)["payload"]["prompt"]
+    assert "Walk a" in prompt and "Walk b" in prompt and "Walk c" not in prompt
+    with pytest.raises(ValueError,match="Missing scene"):
+        call("director_resume_import",story="harbor",branch="damaged")
+    assert p.state()["director"]==data and p.state()["legacy"]==legacy

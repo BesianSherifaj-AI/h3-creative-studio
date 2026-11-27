@@ -58,9 +58,16 @@ def installation(kind,config=None):
     appdata=Path(os.environ.get("APPDATA",Path.home()/".config"))
     instance=Path.home()/"ComfyUI-Installs"/("H3-Benchmark" if kind=="video" else "H3-Image")
     source=Path(config.get("source") or (instance/"ComfyUI")).expanduser().resolve()
+    if not (source/"main.py").is_file() and (source/"ComfyUI"/"main.py").is_file():
+        source = source/"ComfyUI"
     instance=source.parent
-    python=Path(config.get("python") or (instance/".venv"/("Scripts/python.exe" if os.name=="nt" else "bin/python"))).expanduser().resolve()
-    custom_nodes=Path(config.get("custom_nodes") or instance/"base"/"custom_nodes").expanduser().resolve()
+    executable = Path("Scripts/python.exe" if os.name=="nt" else "bin/python")
+    interpreters = (instance/".venv"/executable, source/".venv"/executable, instance/"python_embeded"/"python.exe",
+                    instance/"python_embedded"/"python.exe", instance/"venv"/executable)
+    python = Path(config.get("python") or next((p for p in interpreters if p.is_file()), interpreters[0])).expanduser().resolve()
+    node_dirs = (instance/"base"/"custom_nodes", source/"custom_nodes")
+    custom_nodes = Path(config.get("custom_nodes") or next((p for p in node_dirs if all((p/n).is_dir() for n in _VIDEO_NODES)),
+                        next((p for p in node_dirs if p.is_dir()),node_dirs[0]))).expanduser().resolve()
     if config.get("model_configs") is not None:
         values=config["model_configs"]
         if not isinstance(values,list):

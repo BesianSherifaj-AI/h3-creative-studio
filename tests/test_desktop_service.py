@@ -13,7 +13,8 @@ from h3studio.server import Server
 
 
 def test_project_shortcut_service_and_decoded_trim(tmp_path):
-    studio=Studio(tmp_path/'app')
+    from h3studio.demo import create_demo
+    studio=Studio(tmp_path/'app',create_demo(tmp_path/'five-second-shot').folder)
     server=Server(studio)
     thread=threading.Thread(target=server.serve_forever,daemon=True)
     thread.start()
@@ -50,7 +51,7 @@ def test_startup_recovers_when_previous_project_moved(tmp_path):
     (tmp_path/'preferences.json').write_text(json.dumps({'last_project':moved}))
     studio = Studio(tmp_path)
     try:
-        assert studio.state()['project']['name']=='Copper Orbit'
+        assert studio.state()['project']['name']=='Tidal Relay'
         assert studio.state()['notice']
     finally:
         studio.close()

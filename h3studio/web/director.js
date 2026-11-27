@@ -11,6 +11,7 @@ async function directorRequest(args){
   await api('director',{...args,request_id:crypto.randomUUID()});await showQueue();
 }
 function directorHome(){
+  if(window.StudioShell&&window.DirectorRoom){closeModal();return window.StudioShell.selectRoom('film');}
   const data=directorData(),boards=Object.entries(data.boards),turns=Object.entries(data.turns);
   const pending=Object.values(data.reviews).filter(r=>!data.boards[r.id]&&!data.turns[r.id]&&!(r.intent.board&&data.boards[r.intent.board]?.rows[r.intent.row]?.revision===r.id));
   const list=(entries,fn)=>'<div class="dialog-menu">'+entries.map(fn).join('')+'</div>';
@@ -37,6 +38,7 @@ async function directorAccept(review,extra={}){
   if(r.turn)directorTurn(r.turn);else directorBoard(r.board);
 }
 function directorReview(id){
+  if(window.StudioShell&&window.DirectorRoom)return window.DirectorRoom.review(id);
   const data=directorData(),review=data.reviews[id];
   if(data.boards[id]){directorBoard(id);return;}
   if(data.turns[id]){directorTurn(id);return;}

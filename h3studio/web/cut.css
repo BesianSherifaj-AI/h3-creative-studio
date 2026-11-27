@@ -1,0 +1,61 @@
+#cutWorkspace{--cut-line:#343d46;--cut-muted:#a1afbb;--cut-accent:#87dfbd;--cut-head:#f8b276;--cut-gutter:78px;height:100%;min-height:0;overflow:auto;background:#151a1e;color:#e2e8ec;font:13px/1.35 "Segoe UI",sans-serif}
+#cutWorkspace:not([hidden]){display:flex;flex-direction:column}
+#cutWorkspace button,#cutWorkspace select,#cutWorkspace input{font:inherit}
+#cutWorkspace button{padding:5px 10px;min-height:27px;color:#e1e6e8;background:#293138;border:1px solid #465059;border-radius:5px;cursor:pointer}
+#cutWorkspace button:hover:not(:disabled){background:#39454d;border-color:#829a98}
+#cutWorkspace button:disabled{opacity:.4;cursor:default}
+#cutWorkspace :focus-visible{outline:2px solid var(--cut-accent);outline-offset:1px}
+.cut-stage{display:grid;grid-template-columns:minmax(0,1fr) clamp(190px,22%,320px);flex:1 1 46%;min-height:218px;max-height:64%;border-bottom:1px solid var(--cut-line)}
+.cut-viewer{display:flex;flex-direction:column;min-width:0;min-height:0;background:#0b0e10}
+.cut-viewer header,.cut-inspector header,.cut-arrangement>header{display:flex;align-items:center;gap:9px;padding:9px 14px;background:#1e2429;border-bottom:1px solid var(--cut-line);font-weight:600}
+.cut-viewer header span:last-child,.cut-inspector header span{margin-left:auto;color:var(--cut-muted);font-size:11px;font-weight:400}
+.cut-dot{width:7px;height:7px;border-radius:50%;background:var(--cut-accent)}
+.cut-monitor{position:relative;display:grid;place-items:center;min-height:0;flex:1;background:#080a0b}
+.cut-monitor video{width:100%;height:100%;min-height:0;position:absolute;inset:0;object-fit:contain}
+.cut-monitor span{color:var(--cut-muted);z-index:1}
+.cut-transport,.cut-tools,.cut-edit-actions{display:flex;align-items:center;gap:6px}
+.cut-transport{padding:7px 12px;background:#1b2024;border-top:1px solid var(--cut-line)}
+.cut-transport output{font:12px/1.2 Consolas,monospace;font-variant-numeric:tabular-nums;color:#ebf1f1}
+.cut-transport select{margin-left:auto;padding:3px 5px;color:#cbd5d9;background:#242c32;border:1px solid #475058;border-radius:4px}
+.cut-inspector{min-width:0;overflow:auto;border-left:1px solid var(--cut-line);background:#1a2024}
+.cut-inspector h3,.cut-inspector p,.cut-inspector dl,.cut-io,.cut-edit-actions{margin:10px 13px}
+.cut-inspector h3{font-size:16px;overflow-wrap:anywhere}
+.cut-inspector p,.cut-inspector dt{color:var(--cut-muted);font-size:11px}
+.cut-inspector dl{display:grid;grid-template-columns:1fr auto;gap:4px}
+.cut-inspector dd{margin:0;font:11px Consolas,monospace}
+.cut-io{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.cut-io label{display:grid;gap:3px;color:var(--cut-muted);font-size:11px}
+.cut-io input{width:100%;min-width:0;box-sizing:border-box;padding:4px 5px;color:#edf1f3;background:#11171a;border:1px solid #3c474e;border-radius:4px}
+.cut-arrangement{display:flex;flex-direction:column;min-height:168px;flex:1 1 33%;background:#171c21}
+.cut-arrangement>header{flex-wrap:wrap;row-gap:5px}
+#cutSummary{font-size:11px;font-weight:400;color:var(--cut-muted);font-variant-numeric:tabular-nums}
+.cut-tools{margin-left:auto}.cut-zoom{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--cut-muted)}
+.cut-zoom input{width:75px;accent-color:var(--cut-accent)}
+.cut-scroller{overflow:auto;flex:1;min-height:0;scrollbar-color:#526168 #191f24}
+.cut-sheet{position:relative;min-width:100%;width:calc(var(--cut-gutter) + var(--cut-width) + 26px);min-height:100%;background:#151a1e}
+.cut-row{display:grid;grid-template-columns:var(--cut-gutter) 1fr;min-width:100%;border-bottom:1px solid #354048}
+.cut-row>b{position:sticky;left:0;z-index:3;display:flex;align-items:flex-start;justify-content:center;flex-direction:column;padding-left:12px;font:600 12px "Segoe UI",sans-serif;color:#d8e0e3;background:#232a30;border-right:1px solid #3b464d}
+.cut-row>b small{font-size:10px;color:var(--cut-muted);font-weight:400}
+.cut-rail{position:relative;min-width:0;overflow:hidden}
+.cut-scale{height:28px;background:#1b2227}.cut-scale b{font-size:10px;text-transform:uppercase;letter-spacing:.08em}
+.cut-scale .cut-rail{cursor:crosshair;touch-action:none}
+.cut-scale i{position:absolute;height:9px;bottom:0;border-left:1px solid #76838b;font-style:normal}
+.cut-scale i span{position:absolute;bottom:6px;left:4px;color:#b2bfc6;white-space:nowrap;font:10px Consolas,monospace}
+.cut-picture{height:68px}.cut-wave,.cut-bed{height:41px}
+.cut-clip,.cut-peaks,.cut-bed-block{position:absolute;box-sizing:border-box;overflow:hidden}
+.cut-clip{top:4px;bottom:4px;border:1px solid #5e767f;border-radius:4px;background:#33454c;cursor:grab}
+.cut-clip.chosen{border:2px solid var(--cut-accent);background:#37574d}
+.cut-clip>span,.cut-bed-block span{position:absolute;bottom:0;left:0;right:0;padding:3px 6px;color:white;font-size:11px;line-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:#10191cd9;pointer-events:none}
+.cut-filmstrip{position:absolute;inset:0;display:flex;overflow:hidden;pointer-events:none}
+.cut-filmstrip img{width:33.333%;min-width:0;height:100%;object-fit:cover;pointer-events:none}
+.cut-clip i[data-edge]{position:absolute;top:0;bottom:0;width:7px;cursor:ew-resize;touch-action:none;background:#dee7e84d}
+.cut-clip i[data-edge=in]{left:0}.cut-clip i[data-edge=out]{right:0}.cut-clip i[data-edge]:hover{background:var(--cut-accent)}
+.cut-peaks,.cut-bed-block{top:3px;bottom:3px;border:1px solid #36594e;border-radius:3px;background:#233e35;cursor:pointer}
+.cut-peaks svg,.cut-bed-block svg{width:100%;height:100%;fill:#84b6a0}
+.cut-peaks.chosen{border-color:var(--cut-accent)}.cut-bed-block{background:#3b3448;border-color:#675976}.cut-bed-block div{height:100%}.cut-bed-block svg{fill:#ad9cba}
+.cut-bed-block span{background:transparent;text-shadow:0 1px 2px black}
+.cut-indicator{position:absolute;top:0;bottom:0;z-index:2;border-left:2px solid var(--cut-head);pointer-events:none}
+.cut-indicator::before{content:"";position:absolute;left:-5px;top:0;width:8px;height:9px;background:var(--cut-head);clip-path:polygon(0 0,100% 0,100% 60%,50% 100%,0 60%)}
+@media(max-width:850px){.cut-stage{grid-template-columns:minmax(0,1fr) 180px}.cut-zoom input{width:48px}.cut-tools{gap:3px}#cutWorkspace button{padding:4px 6px}.cut-tools{margin-left:0}}
+
+.cut-arrangement>header{flex-wrap:wrap}.cut-tools{flex-wrap:wrap}#cutWorkspace #cutImport,#cutWorkspace #cutScore{color:#b8e7d0}

@@ -299,3 +299,50 @@ def test_editor_engine_controls_store_profiles_and_switch_only_to_owned_worker(t
     with pytest.raises(ValueError,match="different port"):
         engine_action(studio,"engine_config",{"kind":"image","profile":{"port":18021}})
     assert studio.prefs_path.read_bytes()==before
+
+
+def test_choose_a_portable_windows_comfy_bundle(tmp_path):
+    bundle=tmp_path/"ComfyUI Windows Portable"
+    source=bundle/"ComfyUI"
+    (source/"models").mkdir(parents=True)
+    (source/"main.py").touch()
+    for name in runtime._VIDEO_NODES:
+        (source/"custom_nodes"/name).mkdir(parents=True)
+    python=bundle/"python_embeded"/"python.exe"
+    python.parent.mkdir()
+    python.touch()
+    selected=runtime.installation("video",{"source":str(bundle)})
+    assert selected["missing"]==[]
+    assert selected["source"]==str(source) and selected["python"]==str(python)
+    assert selected["native_models"]==[str(source/"models")]
+
+
+def test_model_setup_offline_lists_install_paths_and_reports_removed_live_models(monkeypatch):
+    from h3studio import model_check
+    from vendor.image_graph.workflows import REGISTRY
+    schema=None
+    class Client:
+        def __init__(self,**kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self,*args): pass
+        def get(self,url):
+            if schema is None: raise httpx.ConnectError("offline")
+            return httpx.Response(200,request=httpx.Request("GET",url),json=schema)
+    monkeypatch.setattr(model_check.httpx,"Client",Client)
+    url="http://127.0.0.1:9100"
+    offline=model_check.report("image",url)
+    assert not offline["connected"] and len(offline["recipes"])==10
+    for kind in ("video","image"):
+        assert all(model_check.publisher_url(f["name"]) and f["bytes"] for recipe in model_check.report(kind,url)["recipes"] for f in recipe["files"])
+    first=offline["recipes"][0]
+    assert [(f["folder"],f["installed"]) for f in first["files"]]==[("diffusion_models",None),("text_encoders",None),("vae",None)]
+    weight = first["files"][0]
+    assert weight["bytes"] > 1_000_000_000
+    assert model_check.publisher_url(weight["name"]).startswith("https://huggingface.co/Comfy-Org/MiniMax-H3-Image/blob/")
+    assert model_check.publisher_url("../credentials") is None
+    schema={"LoadImage":{},"UNETLoader":{"input":{"required":{"unet_name":[[REGISTRY["h3"]["unet"]]]}}}}
+    live=model_check.report("image",url)
+    assert live["connected"] and [f["installed"] for f in live["recipes"][0]["files"]]==[True,False,False]
+    assert "CLIPLoader" in live["recipes"][0]["missing_nodes"]
+    video=model_check.report("video",url)
+    assert len(video["recipes"])==3 and "MMH3Save" in video["recipes"][2]["missing_nodes"]

@@ -83,6 +83,8 @@ def take_preview(project, take_id):
     source = project.asset_path(take["video_asset"])
     delivery = options.get("delivery_trim")
     if not delivery:
+        if options.get("kind") == "Studio animatic" and source.suffix.lower() == ".mp4":
+            return source
         if options.get("preview_asset") and options.get("preview_timing")==PROXY_VERSION:
             return project.asset_path(options["preview_asset"])
         if not options.get("preview_asset") and _direct_playback(source):

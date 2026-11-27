@@ -3,11 +3,6 @@ param([switch]$NoShortcut)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $python = Join-Path $root '.venv\Scripts\python.exe'
-foreach ($tool in @('ffmpeg','ffprobe')) {
-    if (!(Get-Command $tool -ErrorAction SilentlyContinue)) {
-        throw "Install a full FFmpeg build and put $tool on PATH."
-    }
-}
 if (!(Test-Path -LiteralPath $python)) {
     $bootstrap = Get-Command py -ErrorAction SilentlyContinue
     if ($bootstrap) {

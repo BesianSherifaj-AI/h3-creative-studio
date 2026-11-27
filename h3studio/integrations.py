@@ -311,6 +311,9 @@ def engine_action(studio,p,op,a):
             if t['settings'].get('job_id')==job['id']:
                 return {'take':t['id']}
         if job['kind']=='image':
+            if pl.get("visual_director"):
+                from .image_director import adopt
+                return adopt(p,job)
             from .image_tools import adopt_image
             return adopt_image(studio,p,pl,receipt,job)
         packet=receipt.get('packet') or {}

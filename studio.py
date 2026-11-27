@@ -28,6 +28,26 @@ def main():
         else:
             import webview
             class Dialogs:
+                def open_guide(self, topic):
+                    import webbrowser
+                    guides = {
+                        'community':'https://github.com/BesianSherifaj-AI/h3-creative-studio#configure-engines',
+                        'comfy':'https://docs.comfy.org/installation/comfyui_portable_windows',
+                        'video':'https://github.com/MiniMax-AI/MiniMax-H3',
+                        'nodes':'https://github.com/einhorn13/mmh3_media',
+                        'attention':'https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes',
+                        'image':'https://github.com/BesianSherifaj-AI/h3-image-editor/blob/main/docs/MODELS.md',
+                        'director':'https://lmstudio.ai/',
+                        'finish':'https://github.com/BesianSherifaj-AI/UPSCALE'
+                    }
+                    return webbrowser.open(guides[topic]) if topic in guides else False
+
+                def open_model_file(self, filename):
+                    import webbrowser
+                    from h3studio.model_check import publisher_url
+                    url = publisher_url(filename)
+                    return webbrowser.open(url) if url else False
+
                 def choose(self,kind,filename=''):
                     mode = {'file':webview.FileDialog.OPEN,'folder':webview.FileDialog.FOLDER,'save':webview.FileDialog.SAVE}[kind]
                     value = window.create_file_dialog(mode,save_filename=filename or '')

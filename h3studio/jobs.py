@@ -135,6 +135,13 @@ class Queue:
         with self._db() as db:
             return [self._record(r) for r in db.execute("SELECT * FROM jobs ORDER BY created DESC")]
 
+    def director_inbox(self, project_id, mode):
+        with self._db() as db:
+            rows = db.execute("""SELECT id,status,message,json_extract(payload,'$.director_request.brief') AS brief
+                FROM jobs WHERE kind='director' AND json_extract(payload,'$.studio_project')=?
+                AND json_extract(payload,'$.mode')=? ORDER BY created DESC""",(project_id,mode))
+            return [dict(row) for row in rows]
+
     def _update(self, ident, status, message, receipt=None):
         with self._db() as db:
             db.execute("UPDATE jobs SET status=?, message=?,updated=?,receipt=coalesce(?,receipt) "
@@ -211,6 +218,8 @@ class Queue:
         base = local_url(p["comfy_url"])
         manifest = p.get("manifest", {})
         allowed = {k for k, n in p["prompt"].items() if n["class_type"] in ("SaveVideo", "SaveImage")}
+        if p.get("visual_director") and p["prompt"].get("3", {}).get("class_type")=="SaveText":
+            allowed = {"3"}
         outputs, folder = [], self.root / ident
         folder.mkdir(exist_ok=True)
         for node in sorted(allowed):

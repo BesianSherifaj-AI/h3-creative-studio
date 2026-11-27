@@ -1,7 +1,7 @@
 'use strict';
 const $ = s => document.querySelector(s);
 const esc = v => String(v ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const state = {doc:null, compId:null, shotId:null, pane:'layers', view:'canvas', frame:0, layerIndex:0, preferences:{}, jobs:{}, plan:null};
+const state = {doc:null, compId:null, shotId:null, pane:'ai', view:'canvas', frame:0, layerIndex:0, preferences:{}, jobs:{}, plan:null};
 const get = () => {
   const doc=state.doc, comp=doc?.compositions[state.compId], rev=doc?.revisions[comp?.current], shot=doc?.shots[state.shotId], take=doc?.takes[shot?.selected_take];
   return {doc,comp,rev,shot,take,layerIndex:state.layerIndex,frame:state.frame};
@@ -57,9 +57,15 @@ function render(){
   const {doc,comp,rev,shot,take}=get();
   $('#projectMenu').textContent=doc.name+' ▾';$('#libraryName').textContent=doc.name;$('#projectStatus').textContent='Saved locally';
   $('#comps').innerHTML=Object.values(doc.compositions).map(c=>'<button class="lib-item '+(c.id===state.compId?'active':'')+'" data-comp="'+c.id+'"><img src="'+revUrl(c.current)+'" alt=""><span><strong>'+esc(c.name)+'</strong><small>'+doc.revisions[c.current].layers.length+' layers</small></span></button>').join('')||'<p class="note">Import a still to create a composition.</p>';
-  $('#shots').innerHTML=doc.cut.map((id,i)=>{const s=doc.shots[id];return '<button class="lib-item '+(id===state.shotId?'active':'')+'" data-shot="'+id+'"><span class="thumb-icon">'+String(i+1).padStart(2,'0')+'</span><span><strong>'+esc(s.name)+'</strong><small>'+Number(s.duration).toFixed(2)+' s'+(s.needs_review?' · review ending':'')+'</small></span></button>';}).join('');
+  $('#shots').innerHTML=doc.cut.map((id,i)=>{
+    const shot=doc.shots[id],guide=shot.guides.find(g=>g.revision||g.role==='image'&&g.asset);
+    const source=guide?.revision?revUrl(guide.revision):guide?.asset?assetUrl(guide.asset):'';
+    const number=String(i+1).padStart(2,'0');
+    const thumb=source?'<span class="shot-thumb"><img src="'+source+'" alt=""><b>'+number+'</b></span>':'<span class="thumb-icon">'+number+'</span>';
+    return '<button class="lib-item '+(id===state.shotId?'active':'')+'" data-shot="'+id+'">'+thumb+'<span><strong>'+esc(shot.name)+'</strong><small>'+Number(shot.duration).toFixed(2)+' s'+(shot.needs_review?' · review ending':'')+'</small></span></button>';
+  }).join('');
   document.querySelectorAll('[data-comp]').forEach(b=>b.onclick=()=>{state.compId=b.dataset.comp;state.layerIndex=get().rev.layers.length-1;state.view='canvas';render();});
-  document.querySelectorAll('[data-shot]').forEach(b=>b.onclick=()=>{state.shotId=b.dataset.shot;state.frame=0;state.plan=null;state.view=get().take?'take':'canvas';render();});
+  document.querySelectorAll('[data-shot]').forEach(b=>b.onclick=()=>{state.shotId=b.dataset.shot;const linked=get().shot?.guides.find(g=>g.revision);if(linked)state.compId=state.doc.revisions[linked.revision].composition;state.frame=0;state.plan=null;state.view=document.body.dataset.room==='image'?'canvas':get().take?'take':'canvas';render();});
   $('#compName').textContent=(state.view==='canvas'?comp?.name:shot?.name)||'Canvas';$('#workType').textContent=state.view==='canvas'?'COMPOSITION':'SAVED TAKE';
   const img=$('#canvasImage'),vid=$('#player');img.hidden=state.view!=='canvas'||!rev;vid.hidden=state.view!=='take'||!take?.video_asset;
   if(!img.hidden&&img.getAttribute('src')!==revUrl(rev.id))img.src=revUrl(rev.id);
@@ -74,7 +80,7 @@ function render(){
   $('#markers').innerHTML=(shot?.guides||[]).map((g,i)=>{const pos=g.frame/(last||1)*100;return '<button class="marker '+(g.frame===0?'edge-first':g.frame===last?'edge-last':'')+'" style="left:'+pos+'%" title="'+esc(g.role)+' at frame '+g.frame+'" data-g="'+i+'">'+(g.revision?'<img src="'+revUrl(g.revision)+'" alt="">':esc(g.role))+'</button>';}).join('');
   document.querySelectorAll('[data-g]').forEach(b=>b.onclick=handle(()=>guideDetails(shot.guides[Number(b.dataset.g)])));
   $('#guide').disabled=!rev||!shot;$('#preview').disabled=!shot;$('#mediaGuide').disabled=!shot;tickFrame();
-  document.querySelectorAll('[data-pane]').forEach(b=>b.classList.toggle('active',b.dataset.pane===state.pane));inspector();
+  document.querySelectorAll('[data-pane]').forEach(b=>b.classList.toggle('active',b.dataset.pane===state.pane));inspector();window.StudioShell?.draw();
 }
 function tickFrame(){state.frame=Math.max(0,Math.min(state.frame,selectedFrame()));const f=state.frame;$('#scrubber').value=f;$('#playhead').style.left=(f/(selectedFrame()||1)*100)+'%';$('#timecode').textContent=time(f);$('#frameLabel').textContent='Frame '+f+' / '+selectedFrame();}
 $('#scrubber').oninput=e=>{state.frame=Number(e.target.value);tickFrame();const t=get().take;if(state.view==='take'&&t){$('#player').currentTime=state.frame/24;}};
@@ -134,7 +140,7 @@ function inspector(){
       '<div class="row">'+fld('Opacity %','lo',Math.round((l.opacity??1)*100),'number','min="0" max="100"')+sel('Blend','lb',['normal','multiply','screen','overlay','darken','lighten','difference'],l.blend||'normal')+'</div><div class="row">'+btn('visible',l.visible===false?'Show layer':'Hide layer','smallbtn')+btn('applyLayer','Apply edit','soft smallbtn')+'</div>'+
       '<div class="row">'+btn('raise','Raise','smallbtn')+btn('lower','Lower','smallbtn')+'</div><h3>Layer mask</h3><div class="row">'+btn('paint','Paint mask','smallbtn')+btn('loadMask','Load mask','smallbtn')+'</div></div>':'')+
       sel('Composition history','revChoice',comp.revisions.map((v,n)=>[v,'Revision '+(n+1)]),comp.current);
-    document.querySelectorAll('[data-layer]').forEach(b=>b.onclick=()=>{state.layerIndex=Number(b.dataset.layer);inspector();});
+    document.querySelectorAll('[data-layer]').forEach(b=>b.onclick=()=>{state.layerIndex=Number(b.dataset.layer);inspector();if(document.body.dataset.room==='image')window.ImageRoom?.refresh();});
     on('#addLayer',()=>importFile('layer'));on('#applyLayer',()=>patchLayer({x:Number(val('lx')),y:Number(val('ly')),scale:Number(val('ls')),rotation:Number(val('lr')),opacity:Number(val('lo'))/100,blend:val('lb')}));
     on('#visible',()=>patchLayer({visible:l.visible===false}));on('#raise',()=>patchLayer({move:1}));on('#lower',()=>patchLayer({move:-1}));on('#paint',()=>window.editTools.paint());
     on('#loadMask',async()=>{const path=await pick('file');if(path)await patchLayer({mask_path:path});});
@@ -165,7 +171,7 @@ $('#canvasImage').onpointerdown=e=>{const {rev,layerIndex}=get();if(!rev?.layers
 $('#canvasImage').onpointerup=handle(async e=>{if(!drag)return;const d=drag;drag=null;const {rev,layerIndex}=get();if(rev?.id!==d.rev)return;const b=e.target.getBoundingClientRect(),ratio=Math.min(b.width/rev.width,b.height/rev.height),dx=Math.round((e.clientX-d.x)/ratio),dy=Math.round((e.clientY-d.y)/ratio);if(Math.abs(dx)+Math.abs(dy)>1)await patchLayer({x:(rev.layers[layerIndex].x||0)+dx,y:(rev.layers[layerIndex].y||0)+dy});});
 async function importFile(type){
   closeModal();const path=await pick('file');if(!path)return;
-  if(type==='clip'){const r=await api('import_clip',{path});state.shotId=r.shot;state.view='take';await refresh();}
+  if(type==='clip'){const r=await api('import_clip',{path});state.shotId=r.shot;state.view='take';await refresh();await window.CutRoom?.reveal(r.shot);}
   else{const r=await api('image',{path,revision:type==='layer'?get().rev?.id:undefined});await setRevision(r.revision);state.layerIndex=get().rev.layers.length-1;render();}
 }
 function addMedia(){modal('Import media','<div class="dialog-menu">'+btn('impStill','Still image → new composition')+btn('impLayer','Image → new layer')+btn('impClip','Video → timeline shot')+'</div>');on('#impStill',()=>importFile('image'));on('#impLayer',()=>importFile('layer'));on('#impClip',()=>importFile('clip'));}
