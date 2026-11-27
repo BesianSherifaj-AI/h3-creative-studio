@@ -3,6 +3,7 @@ on('#engines',openEngines);
 async function h3Dialog(){
   const {shot}=get();if(!shot)throw Error('Add a shot to the timeline first.');
   const saved=await api('recipe_get',{shot:shot.id}), d=saved.recipe;
+  const archived=saved.selected;
   let extra={...d.settings};
   const g=shot.guides.filter(x=>['image','first','middle','last','first_frame','last_frame'].includes(x.role)),end=Math.round(shot.duration*24)-1;
   const defaultMode=g.some(x=>x.frame===0)&&g.some(x=>x.frame===end)?'fl2va':g.some(x=>x.frame===0)?'i2va':'t2va';
@@ -12,20 +13,90 @@ async function h3Dialog(){
     if(savedRevision)startRevisions.push([savedRevision.id,'Saved start · '+savedRevision.name]);
   }
   if(get().rev)startRevisions.push([get().rev.id,'Current canvas revision']);
-  modal('Prepare H3 shot',area('Shot prompt','hp',typeof d.prompt==='string'?d.prompt:JSON.stringify(d.prompt||''))+sel('Frame conditioning','hm',[['t2va','Text + timed guides'],['i2va','First frame'],['l2va','Last frame'],['fl2va','First and last frames'],['ref2va','Reference images, clips and audio']],d.mode||defaultMode)+
+  const sources=[['draft','Shot draft and timeline guides']];
+  if(archived)sources.push(['take',shot.selected_take?'Use selected take’s settings and guides':'Use original take’s settings and guides']);
+  modal('Prepare H3 shot',sel('Settings and guide source','hSource',sources,'draft')+'<div id="hSourceInfo"></div>'+
+    area('Shot prompt','hp',d.prompt||'')+sel('Frame conditioning','hm',[['t2va','Text + timed guides'],['i2va','First frame'],['l2va','Last frame'],['fl2va','First and last frames'],['ref2va','Reference images, clips and audio']],d.mode||defaultMode)+
     '<div class="row">'+fld('Seed','hs',d.seed||0,'number','min="0"')+sel('Resolution','hsize',['0.3','0.5','0.7','1.0'],extra.resolution||'0.3')+'</div><div class="row">'+sel('Aspect','hasp',['16:9','9:16','1:1','4:3','3:4'],extra.aspect_ratio||'16:9')+sel('Sampling','hq',['fast','detailed'],extra.quality||'fast')+'</div>'+
     (shot.branch_action==='continue'?sel('Start from','hstart',(shot.start_modes||['visual']).map(v=>[v,({visual:'Displayed visual ending',original_motion:'Original saved motion',regenerate:'Re-render ending for a new motion branch'})[v]]),shot.start_mode==='motion'?'original_motion':shot.start_mode)+sel('Visual start or regenerated ending','hstartrev',startRevisions,shot.start_revision||''):'')+
     '<details><summary>Project defaults and presets</summary>'+sel('Recipe','hRecipe',[['','Project default'],...Object.keys(saved.presets).map(n=>[n,n])],'')+btn('hApplyRecipe','Apply to form')+fld('Preset name','hPresetName')+btn('hSavePreset','Save named preset')+btn('hDefault','Use form as project default')+'</details>'+
     '<details><summary>Ordered LoRAs by mode</summary>'+area('Optional JSON · mode → ordered array of name and strength','hloras',JSON.stringify(extra.loras_by_mode||{}))+'</details><p class="note">Prepare checks the chosen renderer and uploads guide media. Review the resulting recipe before adding it to the queue.</p>',
-    [{label:'Save shot settings',run:async()=>{await api('recipe_save',{shot:shot.id,recipe:read()});toast('Shot settings saved.');}},
+    [{label:'Save shot settings',run:async()=>{await api('recipe_save',{shot:shot.id,recipe:read()});priorDraft=JSON.stringify([read(),readStart()]);toast('Shot settings saved.');}},
      {label:'Prepare for review',primary:true,run:async()=>{
-      const start=shot.branch_action==='continue'?{start_mode:val('hstart'),start_revision:val('hstart')==='original_motion'?null:val('hstartrev')||null}:{};
-      const r=await api('prepare',{shot:shot.id,...read(),...start});await refresh();reviewPlan(r.plan,r.manifest);}}]);
+      const source=val('hSource')==='take'?{source_take:archived.id}:readStart();
+      const r=await api('prepare',{shot:shot.id,...read(),...source});
+      if(!source.source_take)await rememberDraft();
+      await refresh();dismiss.abort();reviewPlan(r.plan,r.manifest);}}]);
   function read(){return {prompt:val('hp'),mode:val('hm'),seed:+val('hs'),settings:{...extra,resolution:val('hsize'),aspect_ratio:val('hasp'),quality:val('hq'),loras_by_mode:JSON.parse(val('hloras')||'{}')}};}
+  function readStart(){return shot.branch_action==='continue'?{start_mode:val('hstart'),start_revision:val('hstart')==='original_motion'?null:val('hstartrev')||null}:{};}
+  function fill(r){
+    extra={...r.settings};
+    const fields={hp:r.prompt||'',hm:r.mode||defaultMode,hs:r.seed??0,hsize:extra.resolution||'0.3',hasp:extra.aspect_ratio||'16:9',hq:extra.quality||'fast',hloras:JSON.stringify(extra.loras_by_mode||{})};
+    for(const [id,value] of Object.entries(fields)){
+      const field=$('#'+id);
+      if(field.tagName==='SELECT' && ![...field.options].some(o=>o.value===String(value)))field.add(new Option(String(value),String(value)));
+      field.value=value;
+    }
+  }
+  function applyStart(v){
+    if(!$('#hstart')||!v?.start_mode)return;
+    $('#hstart').value=v.start_mode==='motion'?'original_motion':v.start_mode;
+    if(v.start_revision && ![...$('#hstartrev').options].some(o=>o.value===v.start_revision))$('#hstartrev').add(new Option('Saved canvas revision '+v.start_revision,v.start_revision));
+    $('#hstartrev').value=v.start_revision||'';
+  }
+  function sourceInfo(){
+    const replay=val('hSource')==='take', list=replay?archived.guides:shot.guides;
+    const guides=list.map(g=>'<div>Frame '+esc(g.frame)+' · '+esc(g.role||'image')+' · '+esc(g.revision?'revision '+g.revision:'asset '+(g.asset||g.audio_asset||''))+'</div>').join('');
+    const title=replay?'Saved take '+archived.id:'Shot timeline';
+    const lineage=replay&&archived.parent?' Motion from take '+archived.parent.take_id+'.':'';
+    const note=replay?'Approval queues this form with the saved guides. Your shot draft and timeline guides stay separate.'+lineage:saved.unavailable||'';
+    $('#hSourceInfo').innerHTML='<details><summary>'+esc(title)+' · '+list.length+' guides</summary>'+guides+'</details>'+(note?'<p class="note">'+esc(note)+'</p>':'');
+    $('#dialogFoot button').disabled=replay;
+    if($('#hstart')){
+      $('#hstart').disabled=replay;
+      $('#hstartrev').disabled=replay||val('hstart')==='original_motion';
+      $('#hstart').closest('label').hidden=replay;
+      $('#hstartrev').closest('label').hidden=replay;
+    }
+  }
+  fill(d);applyStart(saved.draft_start);sourceInfo();
+  let draft=read(),draftStart=readStart(),takeForm=archived?.recipe;
+  let priorDraft=JSON.stringify([draft,draftStart]);
+  async function rememberDraft(){
+    draft=read();draftStart=readStart();
+    const current=JSON.stringify([draft,draftStart]);
+    if(current!==priorDraft){await api('recipe_draft',{shot:shot.id,recipe:draft,start:draftStart});priorDraft=current;}
+  }
+  const dismiss=new AbortController();
+  function leave(event){
+    event.preventDefault();event.stopImmediatePropagation();
+    (async()=>{
+      try{if(val('hSource')==='draft')await rememberDraft();}
+      catch(error){toast(error.message);}
+      finally{dismiss.abort();closeModal();}
+    })();
+  }
+  $('#closeDialog').addEventListener('click',leave,{capture:true,signal:dismiss.signal});
+  $('#dialog').addEventListener('cancel',leave,{signal:dismiss.signal});
+  $('#hSource').onchange=handle(async()=>{
+    const selector=$('#hSource'),buttons=[...$('#dialogFoot').querySelectorAll('button')];
+    selector.disabled=true;buttons.forEach(b=>b.disabled=true);
+    try{if(selector.value==='take'){
+      try{
+        await rememberDraft();
+      }catch(error){selector.value='draft';throw error;}
+      fill(takeForm);
+    }else{
+      try{takeForm=read();}catch(error){selector.value='take';throw error;}
+      fill(draft);applyStart(draftStart);
+    }}finally{
+      selector.disabled=false;buttons.forEach(b=>b.disabled=false);
+      if(selector.isConnected)sourceInfo();
+    }
+  });
   on('#hDefault',async()=>{saved.default=await api('recipe_default',{shot:shot.id,recipe:read()});toast('Project default saved.');});
   on('#hSavePreset',async()=>{const name=val('hPresetName').trim();const result=await api('recipe_preset',{shot:shot.id,recipe:read(),name});if(!Object.hasOwn(saved.presets,name))$('#hRecipe').add(new Option(name,name));saved.presets[name]=result;$('#hRecipe').value=name;toast('Preset saved.');});
-  on('#hApplyRecipe',()=>{const r=val('hRecipe')?saved.presets[val('hRecipe')]:saved.default;if(!r)throw Error('Save a project default first.');extra={...r.settings};
-    for(const [id,value] of Object.entries({hp:r.prompt||'',hm:r.mode||defaultMode,hs:r.seed??0,hsize:extra.resolution||'0.3',hasp:extra.aspect_ratio||'16:9',hq:extra.quality||'fast',hloras:JSON.stringify(extra.loras_by_mode||{})}))$('#'+id).value=value;});
+  on('#hApplyRecipe',()=>{const r=val('hRecipe')?saved.presets[val('hRecipe')]:saved.default;if(!r)throw Error('Save a project default first.');fill(r);});
   if(shot.branch_action==='continue'){
     const sync=()=>{$('#hstartrev').disabled=val('hstart')==='original_motion';};
     $('#hstart').onchange=sync;sync();
@@ -35,7 +106,8 @@ function reviewPlan(id,m){
   const info=m.timeline||{}, choice=m.start_choice;
   const start=choice?'<p>Continuation start · '+esc(choice.mode==='original_motion'?'Original saved motion':
     (choice.mode==='regenerate'?'Regenerate from ':'Use ')+(choice.revision?'canvas revision '+choice.revision:'the last displayed frame'))+'</p>':'';
-  modal('Review H3 render','<p><strong>'+esc(m.width)+' × '+esc(m.height)+'</strong> · '+esc(m.mode)+' · seed '+esc(m.seed)+'</p>'+start+
+  const source=m.recipe_source_take?'<p>Guide source · saved take '+esc(m.recipe_source_take)+'</p>':'';
+  modal('Review H3 render','<p><strong>'+esc(m.width)+' × '+esc(m.height)+'</strong> · '+esc(m.mode)+' · seed '+esc(m.seed)+'</p>'+source+start+
     '<p class="note">'+esc(info.delivery_frames)+' delivered / '+esc(info.render_frames)+' rendered frames. Displayed endpoints map to render indices '+esc(info.first)+' and '+esc(info.last)+'.</p>'+guideRows(m.guides||[])+
     '<details><summary>Workflow manifest</summary><pre>'+esc(JSON.stringify(m,null,2))+'</pre></details>',[{label:'Approve and queue',primary:true,run:async()=>{
       const j=await api('submit_prepared',{plan:id});await refresh();toast('H3 job '+j.id.slice(0,8)+' queued.');await showQueue();

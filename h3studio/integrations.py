@@ -215,15 +215,28 @@ def engine_action(studio,p,op,a):
                                 details['dimensions'], size, details['audio_seconds'])})
         return {'timeline':timeline,'guides':results}
     if op=='prepare':
-        if not str(a.get('prompt','')).strip():
-            raise ValueError('Enter a shot prompt.')
+        from .recipes import recipe, take_source
         shot = copy.deepcopy(doc['shots'][a['shot']])
+        replay = None
         choice = None
-        if a.get('start_mode'):
+        if a.get('source_take'):
+            replay = take_source(doc,shot,a['source_take'])
+            original = replay['recipe']
+            a = {**original,**a,'settings':{**original['settings'],**a.get('settings',{})}}
+            shot.update(guides=replay['guides'],duration=replay['duration'],branch_action='replay')
+            if motion := replay['parent']:
+                shot.update(parent_take=motion['take_id'],branch_action='continue',
+                            start_mode='original_motion' if motion.get('use_original_motion') else 'motion')
+                live = _parent_spec(p,doc,doc['takes'][shot['parent_take']],shot['start_mode'],{})
+                if any(k in motion and motion[k]!=live[k] for k in ('packet_id','sha256','latent_revision','trim')):
+                    raise ValueError('This take no longer matches its original motion packet and trim.')
+        elif a.get('start_mode'):
             choice = {'mode':a['start_mode'], 'revision':a.get('start_revision')}
             previous = {k:shot.get(k) for k in ('parent_take','start_mode','start_revision','guides')}
             p.apply_start(doc,shot,**choice)
             choice['revision'] = shot['start_revision']
+        if not str(a.get('prompt','')).strip():
+            raise ValueError('Enter a shot prompt.')
         bundle,guides = _video(studio,p,a,doc,shot)
         key = uuid.uuid4().hex
         with p.transaction() as s:
@@ -231,7 +244,12 @@ def engine_action(studio,p,op,a):
             if choice:
                 plan.update(start_choice=choice,previous_start=previous)
                 bundle['manifest']['start_choice'] = choice
-            from .recipes import recipe
+            if replay:
+                plan['source_take'] = replay['id']
+                bundle['manifest']['recipe_source_take'] = replay['id']
+                if replay['start']:
+                    bundle['manifest']['start_choice'] = replay['start']
+                plan['render_parent_take'] = (replay['parent'] or {}).get('take_id') or doc['shots'][shot['id']].get('parent_take') or replay['source_parent_take']
             plan['recipe'] = recipe(a)
             s.setdefault('prepared',{})[key] = plan
         return {'plan':key,'manifest':bundle['manifest']}
@@ -242,7 +260,7 @@ def engine_action(studio,p,op,a):
             raise ValueError('Unlock this selected take before submitting a new render.')
         generation.validate_saved_take(copy.deepcopy(bundle))
         payload = {**bundle,'studio_project':doc['id'],'studio_shot':plan['shot'],'studio_guides':plan['guides'],'studio_plan':a['plan'],
-                   'parent_take':(bundle['manifest'].get('parent') or {}).get('take_id') or doc['shots'][plan['shot']].get('parent_take')}
+                   'parent_take':plan.get('render_parent_take',(bundle['manifest'].get('parent') or {}).get('take_id') or doc['shots'][plan['shot']].get('parent_take'))}
         with p.transaction() as updated:
             saved = updated['prepared'][a['plan']]
             target = updated['shots'][saved['shot']]
@@ -255,8 +273,9 @@ def engine_action(studio,p,op,a):
             # The project change rolls back on queue failure. A retry uses the same
             # durable job ID and cannot overwrite a subsequently approved start.
             queued = studio.queue.enqueue('video',payload,job_id=a['plan'])
-            if 'recipe' in saved and not saved.get('approved_job'):
+            if 'recipe' in saved and not (saved.get('approved_job') or saved.get('source_take')):
                 target['recipe'] = saved['recipe']
+                updated.get('recipe_drafts',{}).pop(target['id'],None)
             saved['approved_job'] = queued['id']
         return queued
     if op=='finish':

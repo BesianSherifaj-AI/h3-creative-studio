@@ -74,7 +74,14 @@ def test_motion_and_visual_branch_use_exact_displayed_take(tmp_path, setup_studi
     assert plan["manifest"]["parent"]["latent_revision"] == 2
     assert plan["manifest"]["guides"][-1]["frame_idx"] == 158
     engine_action(studio, p, "submit_prepared", {"plan":plan["plan"]})
+    original = p.state()["prepared"][plan["plan"]]
+    continued = p.save_take(child,{**original["bundle"]["manifest"],"request":original["request"]},guides=original["guides"])
     p.choose_start(child, "visual", rev)
+    rerun = engine_action(studio,Project(p.folder),"prepare",{"shot":child,"source_take":continued})
+    assert rerun["manifest"]["parent"] == plan["manifest"]["parent"]
+    assert rerun["manifest"]["guides"][-1]["frame_idx"] == 158
+    engine_action(studio,p,"submit_prepared",{"plan":rerun["plan"]})
+    assert p.state()["shots"][child]["start_mode"] == "visual"
     plan = engine_action(studio, p, "prepare", a)
     assert plan["manifest"]["parent"] is None
     assert plan["manifest"]["guides"][0]["revision"] == rev
@@ -84,6 +91,76 @@ def test_motion_and_visual_branch_use_exact_displayed_take(tmp_path, setup_studi
     m = plan["manifest"]
     assert m["timeline"]["trim"] == [4,124] and m["mmh3"]["save_enabled"]
     assert m["guides"][0]["frame_idx"] == 4 and m["guides"][-1]["frame_idx"] == 123
+
+
+def test_selected_recipes_roundtrip_with_independent_draft(tmp_path,setup_studio):
+    from vendor.prompt.comfy_transfer import FL_LORA
+    studio,p,shot,first_revision,fake = setup_studio
+    extra = "Harbor.safetensors"
+    fake.schema["LoraLoaderModelOnly"]["input"]["required"]["lora_name"][0].append(extra)
+    first_stack = [{"name":FL_LORA,"strength":0.8},{"name":extra,"strength":0.3}]
+    second_stack = list(reversed(first_stack))
+    guides = lambda revision:[{"frame":60,"role":"middle","revision":revision,"usage":"timed"}]
+    def call(op,**args):
+        return engine_action(studio,Project(p.folder),op,{"shot":shot,**args})
+    def old_take(prompt,seed,stack,revision,legacy):
+        selected = guides(revision)
+        p.set_guides(shot,selected)
+        request = {"mode":"t2va","prompt":prompt,"seed":seed,"settings":{"loras_by_mode":{"t2va":stack}}}
+        plan = call("prepare",**request)
+        with p.transaction() as doc:
+            row = doc["prepared"].pop(plan["plan"])
+        settings = {**plan["manifest"],"graph":row["bundle"]["prompt"]}
+        if not legacy:
+            settings["request"] = request
+        return p.save_take(shot,settings,guides=[] if legacy else selected)
+    a = old_take("A buoy glows.",101,first_stack,first_revision,True)
+    second_revision = p.save_composition("Different middle",64,48,[])
+    b = old_take("A boat arrives.",202,second_stack,second_revision,False)
+    live_revision = p.save_composition("Independent draft",64,48,[])
+    live_guides = guides(live_revision)
+    p.set_guides(shot,live_guides)
+    draft = {"prompt":"Explore a different route.","seed":303,"mode":"t2va","settings":{}}
+    call("recipe_save",recipe=draft)
+    form = {**draft,"prompt":"Keep my unfinished draft."}
+    call("recipe_draft",recipe=form)
+    for i,(ident,prompt,seed,stack,rev) in enumerate(((a,"A buoy glows.",101,first_stack,first_revision),
+        (b,"A boat arrives.",202,second_stack,second_revision),(a,"A buoy glows.",101,first_stack,first_revision))):
+        Project(p.folder).select_take(shot,ident)
+        recovered = call("recipe_get")
+        frozen = recovered["selected"]
+        assert recovered["recipe"]==form and frozen["id"]==ident
+        assert (frozen["recipe"]["prompt"],frozen["recipe"]["seed"])==(prompt,seed)
+        assert frozen["recipe"]["settings"]["loras_by_mode"]["t2va"]==stack
+        assert frozen["guides"]==guides(rev)
+        # A canceled review, a take-specific override, then an exact rerun.
+        override = {"seed":404} if i==1 else {}
+        plan = call("prepare",source_take=ident,**override)
+        manifest = plan["manifest"]
+        assert manifest["prompt_sha256"]==hashlib.sha256(prompt.encode()).hexdigest()
+        assert (manifest["seed"],manifest["recipe_source_take"])==(override.get("seed",seed),ident)
+        assert [l["name"] for l in manifest["loras"]]==[l["name"] for l in stack]
+        assert manifest["guides"][0]["revision"]==rev and manifest["guides"][0]["frame"]==60
+        if i:
+            job = call("submit_prepared",plan=plan["plan"])["id"]
+            assert studio.queue.get(job,full=True)["payload"]["studio_guides"]==guides(rev)
+            clip = tmp_path/"take.mp4"
+            clip.write_bytes(b"synthetic receipt fixture")
+            studio.queue._update(job,"succeeded","Done",{"outputs":[{"path":str(clip),"sha256":hashlib.sha256(clip.read_bytes()).hexdigest()}]})
+            new = call("adopt",id=job)["take"]
+            stored = p.state()["takes"][new]
+            assert stored["guides"]==guides(rev) and stored["settings"]["recipe_source_take"]==ident
+            assert stored["settings"]["request"]["seed"]==manifest["seed"]
+        assert p.state()["shots"][shot]["recipe"]==draft and p.state()["shots"][shot]["guides"]==live_guides
+        assert call("recipe_get")["recipe"]==form
+    retry = p.branch_take(b,"retry")
+    assert engine_action(studio,Project(p.folder),"recipe_get",{"shot":retry})["selected"]["id"]==b
+    with pytest.raises(ValueError,match="belonging"):
+        engine_action(studio,p,"prepare",{"shot":retry,"source_take":a})
+    with p.transaction() as doc:
+        doc["takes"][a]["settings"]["guides"][0]["revision"]="unavailable-revision"
+    p.select_take(shot,a)
+    assert "composition revision" in call("recipe_get")["unavailable"]
 
 
 def test_continuation_review_commits_only_on_approval_and_keeps_other_tracks(tmp_path, setup_studio, monkeypatch):
