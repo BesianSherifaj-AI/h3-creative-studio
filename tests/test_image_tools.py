@@ -174,3 +174,27 @@ def test_masked_recolor_retains_original_luminance_texture_and_coverage():
             drift = (result[:,:,:3].astype(float)-source[:,:,:3]) @ np.array([.299,.587,.114])
             assert abs(drift).max()<=.501
             assert np.count_nonzero(np.any(result[selected]!=source[selected],axis=1))>400
+
+
+def test_shadow_correction_uses_local_surface_and_keeps_patterned_texture():
+    y,x=np.mgrid[:128,:128]
+    plane=np.stack([190+x//15,188+x//15,170+x//15],axis=2).astype(np.uint8)
+    coverage=np.zeros((128,128),np.uint8)
+    coverage[38:92,36:94]=255
+    mask=Image.fromarray(coverage)
+    src=plane.copy()
+    src[54:75,54:74]=[205,200,4]
+    prediction=plane.copy()
+    prediction[42:85,42:88]-=16
+    def rgba(arr):
+        return Image.fromarray(arr).convert("RGBA")
+    fixed=np.asarray(tools._masked_result(rgba(src),rgba(prediction),mask,"remove"))
+    assert abs(fixed[55:74,54:74,:3].astype(float)-plane[55:74,54:74]).mean()<2
+    assert np.array_equal(fixed[coverage==0,:3],plane[coverage==0])
+    # A fine weave crosses the target from all sides. Keep this real frequency.
+    texture=plane+((x*3+y*7)%33)[:,:,None].astype(np.uint8)
+    assert tools._smooth_repair(texture,texture,coverage) is None
+    textured_source=texture.copy()
+    textured_source[54:75,54:74]=[205,200,4]
+    result=np.asarray(tools._masked_result(rgba(textured_source),rgba(texture),mask,"remove"))
+    assert np.corrcoef(result[55:74,54:74,0].ravel(),texture[55:74,54:74,0].ravel())[0,1]>.98

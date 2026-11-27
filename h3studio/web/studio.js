@@ -38,11 +38,16 @@ const selectedFrame=()=>Math.max(0,Math.round(shownSeconds()*24)-1);
 const revUrl=id=>'/revision/'+encodeURIComponent(id);
 const assetUrl=id=>'/asset/'+encodeURIComponent(id);
 async function refresh(){
-  const s=await api('state'),old=state.doc?.id;state.doc=s.project;state.folder=s.folder;state.preferences=s.preferences;
+  const s=await api('state'),old=state.doc?.id,oldIndex=state.doc?.cut.indexOf(state.shotId)??-1;
+  state.doc=s.project;state.folder=s.folder;state.preferences=s.preferences;
   if(!old&&s.notice)toast(s.notice);
   if(old!==s.project.id){state.compId=null;state.shotId=null;state.frame=0;state.plan=null;state.view='canvas';}
   if(!s.project.compositions[state.compId])state.compId=Object.keys(s.project.compositions)[0];
   if(!s.project.shots[state.shotId])state.shotId=s.project.cut[0];
+  else if(old===s.project.id && oldIndex>=0 && !s.project.cut.includes(state.shotId)){
+    state.shotId=s.project.cut[Math.min(oldIndex,s.project.cut.length-1)];
+    state.frame=0;state.plan=null;state.view=get().take?'take':'canvas';
+  }
   state.frame=Math.min(state.frame,selectedFrame());state.layerIndex=Math.min(Math.max(state.layerIndex,0),Math.max(0,(get().rev?.layers.length||1)-1));
   render();
 }
@@ -58,7 +63,7 @@ function render(){
   $('#compName').textContent=(state.view==='canvas'?comp?.name:shot?.name)||'Canvas';$('#workType').textContent=state.view==='canvas'?'COMPOSITION':'SAVED TAKE';
   const img=$('#canvasImage'),vid=$('#player');img.hidden=state.view!=='canvas'||!rev;vid.hidden=state.view!=='take'||!take?.video_asset;
   if(!img.hidden&&img.getAttribute('src')!==revUrl(rev.id))img.src=revUrl(rev.id);
-  if(!vid.hidden){const src='/take/'+encodeURIComponent(take.id);if(vid.getAttribute('src')!==src)vid.src=src;}
+  if(!vid.hidden){const src='/take/'+encodeURIComponent(take.id);if(vid.getAttribute('src')!==src){presentedFrame=null;vid.src=src;}}
   if(vid.hidden&&!vid.paused)vid.pause();
   $('#emptyArt').hidden=!img.hidden||!vid.hidden;$('#emptyArt').textContent=state.view==='take'?'Render a storyboard or generate a take to play it here.':'Import a still to open it on the canvas.';
   $('#canvasTab').classList.toggle('active',state.view==='canvas');$('#takeTab').classList.toggle('active',state.view==='take');
@@ -74,7 +79,49 @@ function render(){
 function tickFrame(){state.frame=Math.max(0,Math.min(state.frame,selectedFrame()));const f=state.frame;$('#scrubber').value=f;$('#playhead').style.left=(f/(selectedFrame()||1)*100)+'%';$('#timecode').textContent=time(f);$('#frameLabel').textContent='Frame '+f+' / '+selectedFrame();}
 $('#scrubber').oninput=e=>{state.frame=Number(e.target.value);tickFrame();const t=get().take;if(state.view==='take'&&t){$('#player').currentTime=state.frame/24;}};
 const player=$('#player');
-player.addEventListener('timeupdate',()=>{if(state.view==='take'&&!player.paused){state.frame=Math.min(selectedFrame(),Math.floor(player.currentTime*24));tickFrame();}});
+let presentedFrame=null;
+function guideClock(){if(state.view==='take'){state.frame=Math.floor(player.currentTime*24);tickFrame();}}
+for(const event of ['timeupdate','seeked','pause'])player.addEventListener(event,guideClock);
+player.addEventListener('seeking',()=>{presentedFrame=null;});
+if(player.requestVideoFrameCallback){
+  const shown=(_,meta)=>{
+    if(!player.seeking)presentedFrame={src:player.currentSrc,seconds:meta.mediaTime};
+    player.requestVideoFrameCallback(shown);
+  };
+  player.requestVideoFrameCallback(shown);
+}
+async function displayedPosition(){
+  const {take,frame}=get();
+  if(!take?.video_asset)throw Error('Choose a rendered or imported take.');
+  if(state.view!=='take'){
+    const linked=state.doc.source_frames?.[state.compId];
+    if(linked?.take===take.id)return {take:take.id,source_index:linked.index};
+    const retained=player.getAttribute('src')==='/take/'+encodeURIComponent(take.id);
+    state.view='take';render();
+    if(!retained && frame>0)player.currentTime=frame/24;
+  }
+  if(!player.paused)player.pause();
+  if(player.seeking||player.readyState<2){
+    await new Promise((resolve,reject)=>{
+      const stop=()=>{clearTimeout(timer);player.removeEventListener('seeked',ready);player.removeEventListener('loadeddata',ready);};
+      const ready=()=>{if(!player.seeking&&player.readyState>=2){stop();resolve();}};
+      const timer=setTimeout(()=>{stop();reject(Error('Playback did not reach the selected frame.'));},10000);
+      player.addEventListener('seeked',ready);player.addEventListener('loadeddata',ready);ready();
+    });
+  }
+  // A seeked event may precede compositor presentation by one display refresh.
+  await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+  if(get().take?.id!==take.id)throw Error('The displayed take changed.');
+  return presentedFrame?.src===player.currentSrc?{take:take.id,presented_seconds:presentedFrame.seconds,seconds:player.currentTime}:
+    {take:take.id,seconds:player.currentTime};
+}
+async function stepSource(step){
+  if(state.view!=='take'){state.view='take';render();}
+  const position=await displayedPosition();
+  const info=await api('edit_info',{...position,step});
+  presentedFrame=null;player.currentTime=info.seek_seconds;
+  await displayedPosition();toast('Source frame '+info.source_index+' · PTS '+info.pts);
+}
 on('#canvasTab',()=>{state.view='canvas';render();});on('#takeTab',()=>{state.view='take';render();});
 document.querySelectorAll('[data-pane]').forEach(b=>b.onclick=()=>{state.pane=b.dataset.pane;render();});
 function inspector(){
@@ -95,10 +142,11 @@ function inspector(){
   }else if(state.pane==='shot'){
     if(!shot){p.innerHTML=btn('shotEmpty','Add shot','wide');on('#shotEmpty',newShot);return;}
     p.innerHTML='<h3>Takes</h3>'+shot.takes.map((k,n)=>'<button data-take="'+k+'" class="take-row '+(k===take?.id?'active':'')+'"><span class="thumb-icon">▷</span><span><strong>Take '+(n+1)+'</strong><small>'+esc(state.doc.takes[k].settings.kind||'H3 video')+'</small></span></button>').join('')+(!take?'<p class="note">Render a storyboard to save your first take.</p>':'')+
-    (take?'<div class="props"><h3>Edit footage</h3><div class="row">'+btn('openFrame','Open frame')+btn('applyFrame','Save frame edit')+'</div>'+btn('rangeEdit','Track a range','section-action')+btn('trim','Trim and audio routes','section-action')+'<h3>From this take</h3>'+btn('branchContinue','Continue from this ending','section-action')+btn('branchRetry','Try another take','section-action')+btn('branchScene','Plan a separate scene','section-action')+btn('finish','Finish with UPSCALE','section-action')+'</div>':'')+
+    (take?'<div class="props"><h3>Edit footage</h3><div class="row">'+btn('prevSource','Previous source frame')+btn('nextSource','Next source frame')+'</div><div class="row">'+btn('openFrame','Open frame')+btn('applyFrame','Save frame edit')+'</div>'+btn('rangeEdit','Track a range','section-action')+btn('trim','Trim and audio routes','section-action')+'<h3>From this take</h3>'+btn('branchContinue','Continue from this ending','section-action')+btn('branchRetry','Try another take','section-action')+btn('branchScene','Plan a separate scene','section-action')+btn('finish','Finish with UPSCALE','section-action')+(take.settings.kind==='finish' && take.parent_take?btn('compareFinish','Compare with source','section-action'):'')+'</div>':'')+
     '<h3>Cut order</h3><div class="row">'+btn('earlier','Move earlier')+btn('later','Move later')+'</div>'+btn('cutHistory','Cut history','section-action')+btn('master','H3 motion masters','section-action');
     document.querySelectorAll('[data-take]').forEach(b=>b.onclick=handle(async()=>{await api('select',{shot:shot.id,take:b.dataset.take});state.view='take';await refresh();}));
-    on('#openFrame',()=>window.editTools.openFrame());on('#applyFrame',()=>window.editTools.oneFrame());on('#rangeEdit',()=>window.editTools.range());on('#trim',trimTake);on('#finish',finish);
+    on('#openFrame',()=>window.editTools.openFrame());on('#applyFrame',()=>window.editTools.oneFrame());on('#rangeEdit',()=>window.editTools.range());on('#trim',trimTake);on('#finish',finish);on('#compareFinish',()=>window.editTools.compare({take:take.id}));
+    on('#prevSource',()=>stepSource(-1));on('#nextSource',()=>stepSource(1));
     [['#branchContinue','continue'],['#branchRetry','retry'],['#branchScene','scene']].forEach(([id,action])=>on(id,async()=>{const r=await api('branch',{take:take.id,action});state.shotId=r.shot;state.view='canvas';state.plan=null;await refresh();toast('Shot added to the cut.');}));
     on('#earlier',()=>moveShot(-1));on('#later',()=>moveShot(1));on('#cutHistory',()=>window.recoverTools.history());on('#master',masterDialog);
   }else{
@@ -138,7 +186,25 @@ async function waitTask(id){
 }
 on('#preview',async()=>{const b=$('#preview');b.disabled=true;try{const s=await api('storyboard',{shot:state.shotId});toast('Rendering CPU storyboard…');await waitTask(s.task);state.view='take';state.pane='shot';await refresh();toast('Storyboard take saved.');}finally{b.disabled=false;}});
 function trimTake(){const {take}=get(),range=take.settings.delivery_trim||[0,take.duration];modal('Trim and route audio',fld('Source in · seconds','tStart',range[0],'number','min="0" step=".001"')+fld('Source out · seconds','tEnd',range[1],'number','min="0" step=".001"')+fld('Source audio per output track · blank for auto','route',(take.settings.audio_route||[]).map(x=>x===null?'silence':x).join(', '))+'<p class="note">Audio tracks start at 0. Enter “0, silence” to route the first source track and a silent second track.</p>',[{label:'Save trimmed take',primary:true,run:async()=>{const audio=val('route').trim()?val('route').split(',').map(s=>s.trim()==='silence'?null:Number(s.trim())):[];await api('trim',{take:take.id,start:Number(val('tStart')),end:Number(val('tEnd')),audio});await refresh();closeModal();}}]);}
-on('#export',()=>{modal('Export film','<p class="note">'+state.doc.cut.length+' shots in timeline order</p><div class="row">'+fld('Width','ew',1920,'number')+fld('Height','eh',1080,'number')+'</div>'+sel('Delivery frame rate','ef',['24','25','30','30000/1001','60','60000/1001'],'24')+sel('Delivery color','ec',[['bt709','Rec. 709 · SDR'],['bt2020-pq','Rec. 2020 PQ · HDR']],'bt709')+fld('Audio tracks','ea',1,'number','min="0" max="8"'),[{label:'Choose export file',primary:true,run:async()=>{const path=await pick('save',state.doc.name+'.mp4');if(!path)return;const r=await api('export',{path,width:+val('ew'),height:+val('eh'),fps:val('ef'),color:val('ec'),audio_tracks:+val('ea')});closeModal();toast('Exporting film…');await waitTask(r.task);toast('Film exported to '+path);}}]);});
+function editSoundtrack(bed) {
+  let file='';
+  modal(bed?'Edit soundtrack':'Add soundtrack',btn('bedFile','Choose audio file')+'<p id="bedName" class="note">'+esc(bed?.name||'Choose narration, music or a video with audio.')+'</p>'+
+    fld('Timeline offset (seconds)','bedOffset',bed?.offset??0,'number','min="0" step=".001"')+
+    fld('Gain (dB)','bedGain',bed?.gain_db??0,'number','min="-96" max="24" step=".1"')+
+    fld('Source audio track','bedStream',(bed?.stream??0)+1,'number','min="1"')+
+    fld('Output audio track','bedTrack',(bed?.track??0)+1,'number','min="1" max="8"'),[
+    ...(bed?[{label:'Remove from mix',run:async()=>{await api('soundtrack_remove',{id:bed.id});await refresh();soundtrackDialog();}}]:[]),
+    {label:'Save to film',primary:true,run:async()=>{if(!file&&!bed)throw Error('Choose an audio file.');await api('soundtrack_save',{id:bed?.id,path:file,offset:+val('bedOffset'),gain_db:+val('bedGain'),stream:+val('bedStream')-1,track:+val('bedTrack')-1});await refresh();soundtrackDialog();}}]);
+  on('#bedFile',async()=>{const chosen=await pick('file');if(chosen){file=chosen;$('#bedName').textContent=chosen;}});
+}
+function soundtrackDialog(){
+  const beds=Object.values(state.doc.soundtracks||{});
+  modal('Film soundtrack','<p class="note">Music and narration mix with the audio from your selected takes.</p><div class="dialog-menu">'+
+    beds.map(b=>'<button data-bed="'+esc(b.id)+'">'+esc(b.name)+' · '+esc(b.offset)+' s · '+esc(b.gain_db)+' dB · track '+esc(b.track+1)+'</button>').join('')+'</div>',
+    [{label:'Add soundtrack',primary:true,run:()=>editSoundtrack(null)},{label:'Export settings',run:()=>$('#export').click()}]);
+  document.querySelectorAll('[data-bed]').forEach(b=>b.onclick=()=>editSoundtrack(state.doc.soundtracks[b.dataset.bed]));
+}
+on('#export',()=>{modal('Export film','<p class="note">'+state.doc.cut.length+' shots in timeline order</p><div class="row">'+fld('Width','ew',1920,'number')+fld('Height','eh',1080,'number')+'</div>'+sel('Delivery frame rate','ef',['24','25','30','30000/1001','60','60000/1001'],'24')+sel('Delivery color','ec',[['bt709','Rec. 709 · SDR'],['bt2020-pq','Rec. 2020 PQ · HDR']],'bt709')+fld('Audio tracks','ea',1,'number','min="0" max="8"'),[{label:'Film soundtrack',run:soundtrackDialog},{label:'Choose export file',primary:true,run:async()=>{const path=await pick('save',state.doc.name+'.mp4');if(!path)return;const r=await api('export',{path,width:+val('ew'),height:+val('eh'),fps:val('ef'),color:val('ec'),audio_tracks:+val('ea')});closeModal();toast('Exporting film…');await waitTask(r.task);toast('Film exported to '+path);}}]);});
 function projectMenu(){
   const recent=(state.preferences.recent_projects||[]).filter(path=>path!==state.folder);
   const recentList=recent.length?'<h3>Recent projects</h3><div class="dialog-menu">'+recent.map((path,i)=>'<button data-recent="'+i+'" title="'+esc(path)+'">'+esc(state.preferences.recent_labels?.[path]||path.split(/[\\/]/).pop())+'</button>').join('')+'</div>':'';
@@ -146,4 +212,4 @@ function projectMenu(){
   document.querySelectorAll('[data-recent]').forEach(b=>b.onclick=handle(async()=>{await api('open',{path:recent[Number(b.dataset.recent)]});await refresh();closeModal();}));
   on('#openProject',async()=>{const path=await pick('folder');if(path){await api('open',{path});await refresh();closeModal();}});on('#newProject',()=>{modal('New project',fld('Project name','projectTitle','Untitled film')+'<p class="note">Choose an empty project folder. The library and shots will travel with it.</p>',[{label:'Choose folder',primary:true,run:async()=>{const path=await pick('folder');if(path){await api('new',{path,name:val('projectTitle')});await refresh();closeModal();}}}]);});on('#historyProject',()=>window.recoverTools.history());}
 on('#projectMenu',projectMenu);on('#recovery',()=>window.recoverTools.open());
-window.H3={api,refresh,pick,toast,modal,closeModal,esc,get,setRevision,waitTask};
+window.H3={api,refresh,pick,toast,modal,closeModal,esc,get,setRevision,waitTask,displayedPosition};

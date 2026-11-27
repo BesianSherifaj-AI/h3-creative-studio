@@ -91,7 +91,7 @@ class Handler(BaseHTTPRequestHandler):
             if url.path.startswith(('/asset/', '/revision/', '/take/')):
                 kind, ident = url.path.strip('/').split('/')
                 return self.send_file(self.server.studio.file(kind, ident))
-            if url.path in ('/', '/studio.css', '/studio.js', '/engines.js', '/runtime.js', '/editor.js', '/recovery.js'):
+            if url.path in ('/', '/studio.css', '/studio.js', '/director.js', '/engines.js', '/runtime.js', '/editor.js', '/recovery.js'):
                 return self.send_file(STATIC / ('index.html' if url.path=='/' else url.path[1:]))
             return self.reply(404)
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):

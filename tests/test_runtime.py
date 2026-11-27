@@ -1,10 +1,16 @@
 """Engine startup controls exercised without launching ComfyUI or accessing a GPU."""
 import json
+import socket
+import subprocess
+import sys
+import time
+from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+import httpx
 
 from h3studio import runtime
 
@@ -105,7 +111,8 @@ def test_repeated_start_pid_identity_busy_queue_and_release(tmp_path,monkeypatch
     assert runtime.engine_status(tmp_path,"video")["device"]=="fixture CUDA"
     assert "Waiting" in runtime.stop_engine(tmp_path,"video")["detail"]
     assert fake.live
-    assert not runtime.release_idle_peers(tmp_path,"http://127.0.0.1:8022")
+    with pytest.raises(runtime.DispatchWaiting,match="running or pending"):
+        runtime.release_idle_peers(tmp_path,"http://127.0.0.1:8022")
     busy=False
     assert runtime.release_idle_peers(tmp_path,"http://127.0.0.1:8022")==["video"]
     assert [c for c in calls if c[0]=="/free"]==[("/free",{"unload_models":True,"free_memory":True})]
@@ -127,6 +134,121 @@ def test_missing_engine_never_launches(tmp_path,monkeypatch):
     monkeypatch.setattr(runtime,"game_guard",lambda:[])
     with pytest.raises(ValueError,match="Missing installed engine files"):
         runtime.start_engine(tmp_path,"image",cfg)
+
+
+def serve_test_renderer(port):
+    """Independent loopback process, Comfy-shaped HTTP queues, no GPU operations."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from test_jobs import Renderer
+    renderer = Renderer()
+    events = []
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_): pass
+        def respond(self, value):
+            self.send_response(200)
+            self.send_header("Content-Type","application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(value).encode())
+        def do_GET(self):
+            if self.path == "/events": return self.respond(events)
+            if self.path == "/queue" and self.server.unverifiable: return self.respond({})
+            response = renderer.handle(httpx.Request("GET","http://localhost"+self.path))
+            if self.path == "/queue" and self.server.pending:
+                rows = response.json()["queue_running"]
+                return self.respond({"queue_running":[],"queue_pending":rows})
+            self.send_response(response.status_code)
+            self.end_headers()
+            self.wfile.write(response.content)
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length",0))) or "{}")
+            events.append([time.time_ns(),self.path,body.get("prompt_id") or body.get("id")])
+            if self.path == "/free": return self.respond({})
+            if self.path == "/control":
+                self.server.pending = body.get("pending",False)
+                self.server.unverifiable = body.get("unverifiable",False)
+                return self.respond({})
+            if self.path == "/complete":
+                renderer.complete(body["id"])
+                return self.respond({})
+            self.respond(renderer.handle(httpx.Request("POST","http://localhost"+self.path,json=body)).json())
+    httpd = ThreadingHTTPServer(("127.0.0.1",port),Handler)
+    httpd.unverifiable = httpd.pending = False
+    httpd.serve_forever()
+
+
+def test_live_peer_and_target_reservation_survives_restart(tmp_path):
+    from h3studio.jobs import Queue
+    from test_jobs import GRAPH
+    folder = tmp_path/"queue"
+    def open_queue():
+        return Queue(folder,guard=lambda:[],before_dispatch=lambda url:runtime.release_idle_peers(tmp_path,url),
+                     check_occupancy=lambda url:runtime.release_idle_peers(tmp_path,url,release=False))
+    with ExitStack() as cleanup, httpx.Client(trust_env=False) as client:
+        urls = {}
+        for kind in ("video","image"):
+            base = runtime._base(tmp_path,kind)
+            base.mkdir(parents=True)
+            main = base/"main.py"
+            main.write_text(f"import sys\nsys.path[:0]={list(map(str,[Path(__file__).parent,Path(__file__).parent.parent]))!r}\n"
+                            "from test_runtime import serve_test_renderer\nserve_test_renderer(int(sys.argv[sys.argv.index('--port')+1]))")
+            with socket.socket() as s:
+                s.bind(("127.0.0.1",0))
+                port = s.getsockname()[1]
+            proc = subprocess.Popen([sys.executable,str(main),"--base-directory",str(base),"--listen","127.0.0.1","--port",str(port)],
+                                    creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
+            cleanup.callback(proc.wait,5)
+            cleanup.callback(proc.terminate)
+            runtime._write(base/"owner.json",{"pid":proc.pid,"created":runtime.psutil.Process(proc.pid).create_time(),"main":str(main),"port":port})
+            deadline = time.monotonic()+10
+            while not runtime._listening(port):
+                if proc.poll() is not None or time.monotonic() >= deadline: pytest.fail("Fixture HTTP renderer failed to start")
+                time.sleep(.025)
+            urls[kind] = f"http://127.0.0.1:{port}"
+        video,image = urls["video"],urls["image"]
+        def post(base,path,data):
+            response = client.post(base+path,json=data)
+            response.raise_for_status()
+            return response.json()
+        def direct(base,ident):
+            post(base,"/prompt",{"prompt_id":ident,"client_id":"external","prompt":GRAPH})
+        direct(video,"external-video")
+        direct(image,"external-image")
+        post(video,"/control",{"pending":True})
+        q = open_queue()
+        (tmp_path/"backend.py").write_text("# test installation")
+        clip = tmp_path/"clip.mp4"
+        clip.write_bytes(b"fixture")
+        for kind,fields in [("director",{"url":"http://localhost:1234","model":"fixture","prompt":"Scene"}),
+                            ("finish",{"installation":str(tmp_path),"input":str(clip)})]:
+            waiting = q.enqueue(kind,fields)["id"]
+            open_queue().tick()
+            assert q.get(waiting)["status"] == "queued" and "owned video" in q.get(waiting)["message"]
+            q.cancel(waiting)
+        ident = q.enqueue("image",{"comfy_url":image,"prompt":GRAPH})["id"]
+        open_queue().tick()
+        assert "owned video" in q.get(ident)["message"]
+        post(video,"/complete",{"id":"external-video"})
+        post(video,"/control",{"unverifiable":True})
+        open_queue().tick()
+        assert q.get(ident)["status"]=="queued" and "verify" in q.get(ident)["message"]
+        post(video,"/control",{})
+        open_queue().tick()
+        assert q.get(ident)["status"]=="queued" and "owned image" in q.get(ident)["message"]
+        post(image,"/complete",{"id":"external-image"})
+        open_queue().tick()
+        assert q.get(ident)["status"]=="working"
+        post(image,"/complete",{"id":ident})
+        open_queue().tick()
+        assert q.get(ident)["status"]=="succeeded"
+        events = sorted(client.get(video+"/events").json()+client.get(image+"/events").json())
+        accepted = [t for t,route,i in events if route=="/prompt" and i==ident]
+        finished = [t for t,route,i in events if route=="/complete" and i.startswith("external")]
+        assert len(accepted)==1 and len(finished)==2 and min(accepted)>max(finished)
+        assert not [route for _,route,_ in events if route.endswith("/cancel") or route=="/interrupt"]
+        receipt={"fixture":"Two local HTTP renderer processes with OS-verified ownership; no hardware rendering",
+                 "endpoints":urls,"owned_job":ident,"status":q.get(ident)["status"],"events_unix_ns":events,
+                 "dispatch_after_both_external_completions_ns":min(accepted)-max(finished)}
+        (tmp_path/"occupancy-receipt.json").write_text(json.dumps(receipt,indent=2))
 
 
 def test_model_discovery_matches_source_record_and_falls_back_to_native(tmp_path,monkeypatch):

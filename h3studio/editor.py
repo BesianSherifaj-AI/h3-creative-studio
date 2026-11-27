@@ -1,6 +1,6 @@
 """Desktop source-frame, layer-mask and range-edit commands."""
-from bisect import bisect_left, bisect_right
-from functools import lru_cache
+from bisect import bisect_right
+from fractions import Fraction
 from pathlib import Path
 import json
 import math
@@ -8,14 +8,7 @@ import tempfile
 
 from PIL import Image, ImageChops, ImageDraw, ImageOps
 from . import media
-
-
-@lru_cache(maxsize=8)
-def _timeline(path, size, mtime):
-    frames = media.frame_index(path)
-    if not frames:
-        raise ValueError("This source has no decoded frames.")
-    return frames, [f["time_seconds"] for f in frames], media.probe_media(path)
+from .playback import PROXY_VERSION, source_proxy, source_window
 
 
 def _take(project, ident):
@@ -24,12 +17,7 @@ def _take(project, ident):
     if not take or not take.get("video_asset"):
         raise ValueError("Select a rendered or imported take first.")
     path = project.asset_path(take["video_asset"])
-    stat = path.stat()
-    frames, times, meta = _timeline(str(path), stat.st_size, stat.st_mtime_ns)
-    start, end = take["settings"].get("delivery_trim", [0., meta["duration"]])
-    first = max(0, bisect_right(times, start + 1e-9)-1)
-    last = min(len(frames)-1, max(first, bisect_left(times, end - 1e-9)-1))
-    return state, take, path, frames, times, meta, start, end, first, last
+    return state, take, path, *source_window(path,take["settings"].get("delivery_trim"))
 
 
 def _selection(project, args):
@@ -39,15 +27,31 @@ def _selection(project, args):
         if type(index) is not int or not first <= index <= last:
             raise ValueError("Choose a source frame inside the take's delivered trim.")
     else:
-        seconds = float(args.get("seconds", 0))
-        if not math.isfinite(seconds):
-            raise ValueError("Enter a finite playhead time.")
-        index = min(last, max(first, bisect_right(times, start + seconds + 1e-9)-1))
+        shown = "presented_seconds" in args
+        seconds = media._ratio(args["presented_seconds"] if shown else args.get("seconds",0))
+        # WebView presents media sample timestamps at microsecond precision. Roundoff at
+        # a known frame boundary must not select the preceding source frame.
+        tolerance = Fraction(2,1_000_000) if shown else 0
+        index = min(last,max(first,bisect_right(times,start+seconds+tolerance)-1))
+        if shown and "seconds" in args:
+            # A previously queued compositor callback can arrive after a native seek.
+            # Accept its PTS only while the paused clock still lies in that frame.
+            clock = start+media._ratio(args["seconds"])
+            stop = times[index+1] if index < last else end
+            if clock < max(start,times[index])-tolerance or clock >= stop+tolerance:
+                index = min(last,max(first,bisect_right(times,clock)-1))
+    step=args.get("step",0)
+    if type(step) is not int or step not in (-1,0,1):
+        raise ValueError("Step by a single source frame.")
+    index=min(last,max(first,index+step))
     entry = frames[index]
+    begin=max(start,times[index])
+    stop=min(end,times[index+1]) if index<last else end
     keys = state.get("edit_keys",{}).get(take["id"], {})
     info = dict(width=meta["width"], height=meta["height"], rotation=meta["rotation"],
                 source_index=index, source_start=first, source_end=last, pts=entry["pts"],
-                source_seconds=entry["time_seconds"], seconds=max(0., entry["time_seconds"]-start),
+                source_seconds=entry["time_seconds"], seconds=float(begin-start),
+                seek_seconds=float((begin+stop)/2-start),
                 time_base=meta["video_time_base"], keys=sorted(keys.values(),key=lambda k:k["index"]))
     return take, path, info
 
@@ -116,20 +120,7 @@ def _archive(p, result):
 
 
 def playback_proxy(source,target,cancel=None):
-    """Create an SDR H.264 review copy while retaining the source-resolution master."""
-    from fractions import Fraction
-    m=media.probe_media(source)
-    scale=min(1., 1280/max(m["width"],m["height"]))
-    w=max(2,2*round(m["width"]*scale/2))
-    h=max(2,2*round(m["height"]*scale/2))
-    try:
-        rate=Fraction(m["fps"])
-        if not 1 <= rate <= 60:
-            rate=Fraction(30)
-    except (ValueError,ZeroDivisionError):
-        rate=Fraction(30)
-    return media.export_film([dict(path=source)],target,width=w,height=h,fps=str(rate),
-                             audio_tracks=min(8,len(m["audio_streams"])),cancel=cancel)
+    return source_proxy(source,target,cancel=cancel)
 
 
 def _run_edit(studio,p,take,path,keys,first_pts,last_pts,settings,action,color):
@@ -143,7 +134,8 @@ def _run_edit(studio,p,take,path,keys,first_pts,last_pts,settings,action,color):
             if cancel():
                 raise InterruptedError("Edit cancelled.")
             receipt={**take["settings"], **settings, "parent_packet_asset":take.get("packet_asset"),
-                     "edit_manifest":manifest, "source_asset":take["video_asset"], "preview_asset":p.add_asset(preview)}
+                     "edit_manifest":manifest, "source_asset":take["video_asset"], "preview_asset":p.add_asset(preview),
+                     "preview_timing":PROXY_VERSION}
             if origin_job := receipt.pop("job_id",None):
                 receipt["source_job_id"] = origin_job
             receipt["edited_ending"] = bool(take["settings"].get("edited_ending") or receipt.get("edited_ending"))
@@ -152,6 +144,48 @@ def _run_edit(studio,p,take,path,keys,first_pts,last_pts,settings,action,color):
             ident=p.save_take(take["shot"],receipt,video,packet,take["id"],guides=take["guides"])
             return {"take":ident}
     return studio._background("Render source-frame edit",work)
+
+
+def _play_masks(project,path,info,args,take):
+    import base64
+    import io
+    from .media_edit import tracked_frames
+    frames,times,meta,start,end,*_=source_window(path,take["settings"].get("delivery_trim"))
+    at=info["source_index"]
+    first,last=args["propagate_from"],args["play_end"]
+    if not all(type(n) is int for n in (first,last)) or not info["source_start"]<=first<=at<=last<=info["source_end"]:
+        raise ValueError("Play a range inside the delivered cut.")
+    keys={k["index"]:{**k,"mask":project.asset_path(k["mask"]) if k.get("mask") else None}
+          for k in info["keys"] if first<=k["index"]<=last}
+    if first not in keys:
+        raise ValueError("Set a correction on the first frame before playing the range.")
+    nearest=max(i for i in keys if i<=at)
+    resume=args.get("resume") or {}
+    if (resume.get("index")==at-1 and nearest<at-1 and
+            (resume.get("mask") or resume.get("state")=="hidden")):
+        nearest=at-1
+        keys[nearest]={"state":"tracked" if resume.get("mask") else "hidden",
+                       "mask":project.asset_path(resume["mask"]) if resume.get("mask") else None}
+    last=min(at+47,last)
+    samples=[]
+    continuation=None
+    for ix,result in tracked_frames(path,meta,frames,{i:k for i,k in keys.items() if nearest<=i<=last},last):
+        if ix<at and result["state"]!="ambiguous":
+            continue
+        mask=result.get("mask")
+        label={"index":ix,"state":result["state"],"start":float(max(start,times[ix])-start),
+               "end":float(min(end,times[ix+1])-start if ix+1<len(times) else end-start)}
+        if mask is not None:
+            full=Image.fromarray(mask)
+            thumb=full.copy();thumb.thumbnail((480,320),Image.Resampling.LANCZOS)
+            tint=Image.new("RGBA",thumb.size,(79,162,250))
+            tint.putalpha(thumb.point(lambda p:round(p*.6)))
+            data=io.BytesIO();tint.save(data,"PNG")
+            label["overlay"]="data:image/png;base64,"+base64.b64encode(data.getvalue()).decode("ascii")
+        samples.append(label)
+        if ix==last and ix<args["play_end"] and result["state"]!="ambiguous":
+            continuation={"index":ix,"state":result["state"],"mask":_store_mask(project,full) if mask is not None else None}
+    return {"samples":samples,"resume":continuation}
 
 
 def editor_action(studio,p,op,a):
@@ -171,6 +205,27 @@ def editor_action(studio,p,op,a):
     if op in ("frame","edit_info","edit_anchor"):
         take,path,info=_selection(p,a)
         if op=="edit_info":
+            if "play_end" in a:
+                return _play_masks(p,path,info,a,take)
+            if "propagate_from" in a:
+                from .media_edit import preview_tracking
+                first=a["propagate_from"]
+                at=info["source_index"]
+                if type(first) is not int or not info["source_start"]<=first<=at:
+                    raise ValueError("Inspect a frame at or after the start of the tracked range.")
+                choices=[k for k in info["keys"] if first<=k["index"]<=at]
+                if not choices or choices[0]["index"]!=first:
+                    info["tracking"]={"state":"unmarked","detail":"Set a correction on the first frame of the range."}
+                else:
+                    anchor=choices[-1]
+                    if anchor["state"]=="hidden" or anchor["index"]==at:
+                        info["tracking"]={k:anchor[k] for k in ("state","mask") if k in anchor}
+                    else:
+                        frames,_,meta,*_=source_window(path)
+                        tracking=preview_tracking(path,meta,frames,{**anchor,"mask":p.asset_path(anchor["mask"])},at)
+                        if "mask" in tracking:
+                            tracking["mask"]=_store_mask(p,Image.fromarray(tracking["mask"]))
+                        info["tracking"]=tracking
             if a.get("preview"):
                 info["asset"]=_snapshot(p,path,info)
             return info
@@ -190,7 +245,7 @@ def editor_action(studio,p,op,a):
         k=str(info["pts"])
         record=dict(state=state,pts=info["pts"],index=info["source_index"])
         if state in ("keyframe","reappears"):
-            old=next((x.get("mask") for x in info["keys"] if x["pts"]==info["pts"]),None)
+            old=a.get("base_mask") or next((x.get("mask") for x in info["keys"] if x["pts"]==info["pts"]),None)
             dims=(info["width"],info["height"])
             if a.get("path"):
                 with Image.open(a["path"]) as handle:

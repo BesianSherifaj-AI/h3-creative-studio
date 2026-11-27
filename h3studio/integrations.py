@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import tempfile
 import uuid
 from pathlib import Path
@@ -21,7 +22,7 @@ def _kind(guide):
     return role.removeprefix("reference_")
 
 
-def _ending_guide(p, take, shot):
+def _ending_guide(p, take, shot, target):
     if shot.get("start_revision"):
         return {"revision": shot["start_revision"], "frame": 0, "role": "image"}
     if not take or not take.get("video_asset"):
@@ -32,11 +33,23 @@ def _ending_guide(p, take, shot):
         raise ValueError("The parent video has no displayable frames.")
     stop = take["settings"].get("delivery_trim", [0, None])[1]
     frame = next((f for f in reversed(index) if stop is None or f["time_seconds"] < stop - 1e-8), index[0])
-    with tempfile.TemporaryDirectory() as tmp:
-        target = Path(tmp) / "Displayed ending.png"
-        media.extract_frame(src, frame["pts"], target)
-        asset = p.add_asset(target)
-    return {"asset": asset, "frame": 0, "role": "image"}
+    media.extract_frame(src, frame["pts"], target)
+    with target.open("rb") as stream:
+        digest = hashlib.file_digest(stream,"sha256").hexdigest()
+    return {"asset": digest, "frame": 0, "role": "image"}
+
+
+def _visual_guides(guides, first, mode):
+    """Override only the timed visual endpoint for this render."""
+    effective = [first]
+    for guide in guides:
+        if guide["frame"] != 0 or _kind(guide) != "image":
+            effective.append(guide)
+        elif mode == "ref2va" and guide.get("usage","both") != "timed":
+            effective.append({**guide, "usage":"reference"})
+        elif guide.get("audio_asset"):
+            effective.append({"frame":0,"asset":guide["audio_asset"],"role":"audio","usage":"timed"})
+    return effective
 
 
 def _parent_spec(p, doc, take, start, paths):
@@ -56,6 +69,11 @@ def _parent_spec(p, doc, take, start, paths):
 
 
 def _video(studio, p, a, doc, shot):
+    with tempfile.TemporaryDirectory() as folder:
+        return _video_graph(studio,p,a,doc,shot,Path(folder)/"Displayed ending.png")
+
+
+def _video_graph(studio, p, a, doc, shot, ending_file):
     mode = a.get("mode", "t2va")
     timeline = generation.timing(shot["duration"])
     paths, assets, timed, refs = {}, [], [], {}
@@ -65,19 +83,20 @@ def _video(studio, p, a, doc, shot):
         refs[timeline["delivery_frames"] - 1] = "last_frame"
     guides = copy.deepcopy(shot["guides"])
     parent = None
+    displayed = None
     take = doc["takes"].get(shot.get("parent_take"))
     settings = a.get("settings", {})
     if not isinstance(settings, dict):
         raise ValueError("H3 settings must be a JSON object.")
     settings = dict(settings)
     if shot.get("branch_action") == "continue":
-        start = a.get("start_mode") or shot.get("start_mode")
+        start = shot.get("start_mode")
         if start in ("motion", "original_motion"):
             parent = _parent_spec(p, doc, take, start, paths)
         elif start in ("visual", "regenerate"):
-            first = _ending_guide(p, take, shot)
-            guides = [g for g in guides if g["frame"] != 0 or _kind(g) != "image"]
-            guides.insert(0, first)
+            first = _ending_guide(p, take, shot, ending_file)
+            displayed = first.get("asset")
+            guides = _visual_guides(guides,first,mode)
             if start == "regenerate":
                 settings.update(save_mmh3=True, align_motion_ending=True)
         else:
@@ -96,7 +115,7 @@ def _video(studio, p, a, doc, shot):
         source = rev or guide.get("asset") or guide.get("audio_asset")
         # A revision may be used more than once. Keep each role's identity.
         key = f"{i}-{source}"
-        path = studio._revision(p, rev) if rev else p.asset_path(source)
+        path = ending_file if displayed and source == displayed else (studio._revision(p, rev) if rev else p.asset_path(source))
         paths[key] = path
         usage = guide.get("usage", "both")
         if usage not in ("timed", "reference", "both"):
@@ -119,6 +138,8 @@ def _video(studio, p, a, doc, shot):
             "prompt": a["prompt"], "duration": shot["duration"], "seed": a.get("seed", 0), "mode": mode,
             "assets": assets, "guides": timed, "settings": settings, "parent": parent}
     bundle = generation.prepare_take(spec, paths.__getitem__)
+    if displayed:
+        p.add_asset(ending_file)
     return bundle, guides
 
 
@@ -135,6 +156,12 @@ def _archive_result(project, path, digest):
 
 def engine_action(studio,p,op,a):
     doc = p.state()
+    if op.startswith("recipe_"):
+        from .recipes import action as recipe_action
+        return recipe_action(p,op,a)
+    if op == "director" or op.startswith("director_"):
+        from .director import action as director_action
+        return director_action(studio,p,op,a)
     if op in ("prepare_master","submit_master","export_master"):
         from .assembly import master_action
         return master_action(studio,p,op,a)
@@ -170,30 +197,68 @@ def engine_action(studio,p,op,a):
         if motion and (parent := doc['takes'].get(shot.get('parent_take'),{}).get('packet')):
             size = [parent['width'],parent['height']]
         results=[]
-        for g in shot['guides']:
-            path=studio._revision(p,g['revision']) if g.get('revision') else p.asset_path(g.get('asset') or g['audio_asset'])
-            count,dims,secs=_probe_guide(path,_kind(g),g.get('with_audio',False))
-            results.append(guide_layout(g['frame'],count,timeline,dims,size,secs))
+        with tempfile.TemporaryDirectory() as folder:
+            guides, displayed = shot['guides'], None
+            ending_file = Path(folder)/'Displayed ending.png'
+            if shot.get('start_mode') in ('visual','regenerate'):
+                first = _ending_guide(p,doc['takes'].get(shot.get('parent_take')),shot,ending_file)
+                displayed = first.get('asset')
+                guides = _visual_guides(guides,first,a.get('mode','t2va'))
+            for g in guides:
+                asset = g.get('asset') or g.get('audio_asset')
+                if displayed and asset == displayed:
+                    path = ending_file
+                else:
+                    path = studio._revision(p,g['revision']) if g.get('revision') else p.asset_path(asset)
+                details = _probe_guide(path,_kind(g),g.get('with_audio',False))
+                results.append({**details, 'kind':_kind(g), **guide_layout(g['frame'], details['frames'], timeline,
+                                details['dimensions'], size, details['audio_seconds'])})
         return {'timeline':timeline,'guides':results}
     if op=='prepare':
         if not str(a.get('prompt','')).strip():
             raise ValueError('Enter a shot prompt.')
-        shot = doc['shots'][a['shot']]
+        shot = copy.deepcopy(doc['shots'][a['shot']])
+        choice = None
+        if a.get('start_mode'):
+            choice = {'mode':a['start_mode'], 'revision':a.get('start_revision')}
+            previous = {k:shot.get(k) for k in ('parent_take','start_mode','start_revision','guides')}
+            p.apply_start(doc,shot,**choice)
+            choice['revision'] = shot['start_revision']
         bundle,guides = _video(studio,p,a,doc,shot)
         key = uuid.uuid4().hex
         with p.transaction() as s:
-            s.setdefault('prepared',{})[key] = {'shot':shot['id'],'guides':guides,'bundle':bundle,'prompt_text':a['prompt'],'request':copy.deepcopy(a)}
+            plan = {'shot':shot['id'],'guides':guides,'bundle':bundle,'prompt_text':a['prompt'],'request':copy.deepcopy(a)}
+            if choice:
+                plan.update(start_choice=choice,previous_start=previous)
+                bundle['manifest']['start_choice'] = choice
+            from .recipes import recipe
+            plan['recipe'] = recipe(a)
+            s.setdefault('prepared',{})[key] = plan
         return {'plan':key,'manifest':bundle['manifest']}
     if op=='submit_prepared':
         plan = doc['prepared'][a['plan']]
         bundle = plan['bundle']
+        if doc['shots'][plan['shot']].get('locked_take'):
+            raise ValueError('Unlock this selected take before submitting a new render.')
         generation.validate_saved_take(copy.deepcopy(bundle))
         payload = {**bundle,'studio_project':doc['id'],'studio_shot':plan['shot'],'studio_guides':plan['guides'],'studio_plan':a['plan'],
                    'parent_take':(bundle['manifest'].get('parent') or {}).get('take_id') or doc['shots'][plan['shot']].get('parent_take')}
-        return studio.queue.enqueue('video',payload,job_id=a['plan'])
-    if op=='director':
-        return studio.queue.enqueue('director',dict(url=studio.prefs['director_url'],model=studio.prefs['director_model'],
-                                 mode=a['mode'],prompt=a['prompt'],studio_project=doc['id']))
+        with p.transaction() as updated:
+            saved = updated['prepared'][a['plan']]
+            target = updated['shots'][saved['shot']]
+            if target.get('locked_take'):
+                raise ValueError('Unlock this selected take before submitting a new render.')
+            if saved.get('start_choice') and not saved.get('approved_job'):
+                if any(target.get(field) != value for field,value in saved['previous_start'].items()):
+                    raise ValueError('The continuation start or its guides changed. Prepare the shot again.')
+                p.apply_start(updated,target,**saved['start_choice'])
+            # The project change rolls back on queue failure. A retry uses the same
+            # durable job ID and cannot overwrite a subsequently approved start.
+            queued = studio.queue.enqueue('video',payload,job_id=a['plan'])
+            if 'recipe' in saved and not saved.get('approved_job'):
+                target['recipe'] = saved['recipe']
+            saved['approved_job'] = queued['id']
+        return queued
     if op=='finish':
         take=doc['takes'][a['take']]
         return studio.queue.enqueue('finish',dict(installation=studio.prefs['finishing_install'],
@@ -221,7 +286,8 @@ def engine_action(studio,p,op,a):
         if job['status']!='succeeded' or pl.get('studio_project')!=doc['id']:
             raise ValueError('Open the project that owns this completed job.')
         if job['kind']=='director':
-            return receipt['result']
+            from .director import adopt as adopt_director
+            return adopt_director(p,job)
         for t in doc['takes'].values():
             if t['settings'].get('job_id')==job['id']:
                 return {'take':t['id']}

@@ -23,6 +23,16 @@ TERMINAL = {"succeeded", "failed", "cancelled"}
 GAMES = {"rocketleague.exe", "fortniteclient-win64-shipping.exe", "valorant-win64-shipping.exe",
          "cs2.exe", "overwatch.exe", "r5apex.exe", "cod.exe", "eldenring.exe"}
 
+class DispatchWaiting(Exception):
+    """A live renderer is busy or its queue cannot yet be verified."""
+
+
+def verify_queue_idle(queue, label):
+    if not isinstance(queue,dict) or not all(isinstance(queue.get(k),list) for k in ("queue_running","queue_pending")):
+        raise DispatchWaiting(f"Waiting to verify the {label} queue.")
+    if queue["queue_running"] or queue["queue_pending"]:
+        raise DispatchWaiting(f"Waiting for running or pending work on the {label}.")
+
 
 def game_guard():
     if os.name != "nt":
@@ -53,7 +63,7 @@ def _download(client, base, params, target):
 
 
 class Queue:
-    def __init__(self, directory, *, client=None, guard=game_guard, before_dispatch=None):
+    def __init__(self, directory, *, client=None, guard=game_guard, before_dispatch=None, check_occupancy=None):
         self.root = Path(directory).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.path = self.root / "jobs.sqlite"
@@ -61,6 +71,7 @@ class Queue:
         self.client = client
         self.guard = guard
         self.before_dispatch = before_dispatch
+        self.check_occupancy = check_occupancy
         with self._db() as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("""CREATE TABLE IF NOT EXISTS jobs (
@@ -167,6 +178,21 @@ class Queue:
             elif p.get("manifest", {}).get("transfer_id"):
                 from .generation import validate_saved_take
                 validate_saved_take(p, client=client)
+            # Graph/packet validation can take time. Recheck peers and guard at handoff.
+            if self.check_occupancy:
+                self.check_occupancy(base)
+            if games := self.guard():
+                raise DispatchWaiting("Game guard: " + ", ".join(games))
+            if self.get(ident)["cancel_requested"]:
+                self._update(ident,"cancelled","Cancelled before dispatch")
+                return
+            # A configured external target also accepts direct work from other apps.
+            try:
+                occupancy = client.get(base + "/queue")
+                occupancy.raise_for_status()
+                verify_queue_idle(occupancy.json(), "selected renderer")
+            except (httpx.HTTPError, ValueError) as exc:
+                raise DispatchWaiting("Waiting to verify the selected renderer queue.") from exc
             receipt = {"worker": base, "devices": devices, "prompt_id": ident,
                        "submitted_at": time.time(), "accepted": False}
             self._update(ident, "submitting", "Awaiting renderer acknowledgement", receipt)
@@ -359,8 +385,13 @@ class Queue:
                     row = db.execute("SELECT * FROM jobs WHERE status='queued' ORDER BY created LIMIT 1").fetchone()
                     if row is None:
                         return
-                    db.execute("UPDATE jobs SET status='starting',message='Dispatch reserved',updated=? WHERE id=?", (time.time(), row["id"]))
             job = self._record(row, True)
+            if not fresh and job["status"] == "starting" and not job["receipt"]:
+                # No Comfy request can precede its durable 'submitting' receipt.
+                # Child workers write request.json before spawn and must reconcile if present.
+                if job["kind"] in ("image","video") or not (self.root/job["id"]/"request.json").exists():
+                    self._update(job["id"], "cancelled" if job["cancel_requested"] else "queued", "Recovered before dispatch")
+                    return
             if fresh and self.get(job["id"])["cancel_requested"]:
                 self._update(job["id"], "cancelled", "Cancelled before dispatch")
                 return
@@ -376,9 +407,16 @@ class Queue:
                         if self.get(job["id"])["cancel_requested"]:
                             self._update(job["id"], "cancelled", "Cancelled before dispatch")
                             return
+                    with self._db() as db:
+                        reserved = db.execute("UPDATE jobs SET status='starting',message='Dispatch reserved',updated=? "
+                                              "WHERE id=? AND status='queued' AND cancel=0",(time.time(),job["id"]))
+                        if reserved.rowcount != 1:
+                            return
                     self._launch(job)
                 else:
                     self._poll(job, guard)
+            except DispatchWaiting as exc:
+                self._update(job["id"], "queued", str(exc))
             except (httpx.HTTPError, OSError) as exc:
                 current = self.get(job["id"])
                 state = "failed" if fresh and current["status"] == "starting" else "uncertain"

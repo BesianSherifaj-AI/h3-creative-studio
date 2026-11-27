@@ -28,6 +28,12 @@ def _read_image(path, dimensions, mask=False):
     return image if image.dtype == np.uint16 else image.astype(np.uint16) * 257
 
 
+class UncertainTracking(ValueError):
+    def __init__(self, candidate):
+        super().__init__("The moving selection is ambiguous. Add a correction keyframe or mark it Hidden.")
+        self.candidate = candidate
+
+
 def _track(previous, current, mask):
     """Propagate a translation on a bounded working copy, retaining the full-resolution mask."""
     import cv2
@@ -58,10 +64,58 @@ def _track(previous, current, mask):
     gap = max(2, min(6, min(w, h)//3))
     comparable[max(0,best[1]-gap):best[1]+gap+1, max(0,best[0]-gap):best[0]+gap+1] = float("inf")
     second_err = float(comparable.min() / template.size)
-    if err > 35**2 or second_err < err + 12:
-        raise ValueError("The moving selection is ambiguous. Add a correction keyframe or mark it Hidden.")
     matrix = np.float32([[1,0,round(delta_x/scale)], [0,1,round(delta_y/scale)]])
-    return cv2.warpAffine(mask, matrix, (width, height), flags=cv2.INTER_NEAREST)
+    candidate = cv2.warpAffine(mask, matrix, (width, height), flags=cv2.INTER_NEAREST)
+    if err > 35**2 or second_err < err + 12:
+        raise UncertainTracking(candidate)
+    return candidate
+
+
+def tracked_frames(path, meta, frames, anchors, end):
+    """Decode once from a known mask to the requested frame or the first ambiguity."""
+    import av
+    import numpy as np
+    first=min(anchors)
+    with av.open(str(path),options={"protocol_whitelist":"file,pipe","format_whitelist":_INPUT[-1]}) as source:
+        stream=source.streams[meta["video_stream"]]
+        stream.codec_context.thread_count=2
+        source.seek(frames[first]["pts"],stream=stream,backward=True)
+        index=first
+        previous=mask=None
+        for sample in source.decode(stream):
+            if sample.pts<frames[first]["pts"]:
+                continue
+            if sample.pts!=frames[index]["pts"]:
+                raise ValueError("The source decoder disagrees with the tracking timeline.")
+            rgb=sample.to_ndarray(format="rgb48le")
+            current=np.ascontiguousarray(np.rot90(rgb,k=meta["rotation"]//90))
+            if index in anchors:
+                key=anchors[index]
+                state=key["state"]
+                mask=None if state=="hidden" else _read_image(key["mask"],(meta["width"],meta["height"]),True)
+            elif mask is None:
+                state="hidden"
+            else:
+                state="tracked"
+                try:
+                    mask=_track(previous,current,mask)
+                except ValueError as exc:
+                    yield index,{"state":"ambiguous","at":index,"detail":str(exc),"mask":getattr(exc,"candidate",None)}
+                    return
+            yield index,{"state":state,"mask":mask}
+            if index==end:
+                return
+            previous=current
+            index+=1
+    raise ValueError("The source frame could not be decoded.")
+
+
+def preview_tracking(path,meta,frames,anchor,target):
+    for index,result in tracked_frames(path,meta,frames,{anchor["index"]:anchor},target):
+        if index==target or result["state"]=="ambiguous":
+            if index!=target or result["mask"] is None:
+                result.pop("mask")
+            return result
 
 
 def _paint(frame, mask, action, rgb, replacement=None):

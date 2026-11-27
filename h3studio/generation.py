@@ -7,11 +7,14 @@ import json
 import math
 import mimetypes
 import subprocess
+import tempfile
+from fractions import Fraction
 from pathlib import Path
 
 import httpx
 from PIL import Image
 
+from . import media
 from vendor.prompt import comfy_transfer as transfer
 from vendor.prompt.mmh3_transfer import repair_studio_controls
 from vendor.prompt.video_timing import frame_budget
@@ -59,10 +62,11 @@ def _probe_guide(path, kind, with_audio):
     if kind == "image":
         with Image.open(path) as image:
             image.verify()
-            return 1, list(image.size), None
+            return dict(frames=1, dimensions=list(image.size), audio_seconds=None)
     if kind not in ("audio", "video"):
         raise ValueError("Choose an image, video or audio guide.")
-    args = ["ffprobe", "-v", "error", "-count_frames", "-show_streams", "-show_format", "-of", "json", str(path)]
+    formats = media.AUDIO_FORMATS if kind == "audio" else media._FORMATS
+    args = ["ffprobe", "-v", "error", "-protocol_whitelist", "file,pipe", "-format_whitelist", formats, "-count_frames", "-show_streams", "-show_format", "-of", "json", str(path)]
     info = json.loads(subprocess.run(args, capture_output=True, check=True, timeout=120,
                                      creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout)
     streams = info["streams"]
@@ -72,11 +76,36 @@ def _probe_guide(path, kind, with_audio):
         raise ValueError("The guide has no selected audio track.")
     seconds = float(audio.get("duration") or info["format"]["duration"]) if has_audio else None
     if kind == "audio":
-        return 1, None, seconds
+        return dict(frames=1, dimensions=None, audio_seconds=seconds)
     video = next((s for s in streams if s["codec_type"] == "video" and not s.get("disposition", {}).get("attached_pic")), None)
     if not video:
         raise ValueError("The guide has no video stream.")
-    return int(video["nb_read_frames"]), [video["width"], video["height"]], seconds
+    meta = media.probe_media(path)
+    origin = meta["start_pts"] * Fraction(meta["video_time_base"])
+    if has_audio and audio.get("start_time") and audio.get("duration"):
+        seconds = max(0., float(Fraction(audio["start_time"]) - origin) + float(audio["duration"]))
+    return dict(frames=max(1, math.ceil(Fraction(meta["duration_exact"]) * 24)),
+                dimensions=[meta["width"], meta["height"]], audio_seconds=seconds,
+                source_frames=int(video["nb_read_frames"]), source_rate=meta["fps"],
+                source_duration=meta["duration_exact"], source_time_base=meta["video_time_base"],
+                source_start_pts=meta["start_pts"], guide_rate=24)
+
+
+def _conform_video(source, destination, guide, layout):
+    # Sample the picture held at each H3 tick. FFmpeg autorotates into display coordinates.
+    origin = guide["source_start_pts"] * Fraction(guide["source_time_base"])
+    offset = media._seconds(origin)
+    filters = (f"setpts=PTS-({offset})/TB,fps=24:start_time=0:round=up:eof_action=pass,"
+               f"tpad=stop_mode=clone:stop=-1,trim=end_frame={guide['frames']},setpts=N/(24*TB)")
+    args = [*media._ffmpeg(), "-copyts", *media._INPUT, "-i", str(source), "-map", "0:V:0", "-vf", filters,
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "0", "-threads", "2"]
+    if guide.get("with_audio"):
+        audio = (f"asetpts=PTS-({offset})/TB,aresample=48000:async=1:first_pts=0,"
+                 f"atrim=end_sample={round(layout['delivered_audio_seconds'] * 48000)}")
+        args.extend(["-map", "0:a:0", "-af", audio, "-c:a", "alac"])
+    else:
+        args.append("-an")
+    media._run([*args, "-map_metadata", "-1", str(destination)])
 
 
 def _add_guides(bundle, guides, schema, timeline):
@@ -122,6 +151,7 @@ def _add_guides(bundle, guides, schema, timeline):
             inputs.update(audio=link if kind == "audio" else [link[0], 1], audio_vae=audio_vae)
         guider["conditioning"] = add("MiniMaxH3AddGuide", inputs, f"{kind.title()} guide · frame {guide['frame']}")
         receipts.append({**{k: guide.get(k) for k in ("asset_id", "revision", "sha256", "kind", "role", "with_audio", "filename")},
+                         **{k: guide[k] for k in ("source_frames","source_rate","source_duration","source_time_base","source_start_pts","source_sha256","guide_rate") if k in guide},
                          **layout, "node_id": guider["conditioning"][0]})
     manifest.update(timeline=timeline, guides=receipts)
     names = {n["inputs"][field] for n in graph.values() for loader, field in
@@ -237,29 +267,47 @@ def prepare_take(spec, resolve_asset, *, client=None):
     _, schema = transfer._connect(settings, client)
     guides, uploads = [], []
     subfolder = "h3_creative_studio/" + bundle["id"]
-    for index, request in enumerate(spec.get("guides", [])):
-        kind = request.get("kind", "image")
-        path = Path(resolve_asset(request["asset_id"])).resolve(strict=True)
-        if not 0 < path.stat().st_size <= 256 * 1024 * 1024:
-            raise ValueError("Timed guides must fit within 256 MB each.")
-        frames, dimensions, seconds = _probe_guide(path, kind, request.get("with_audio", False))
-        name = f"guide-{index}" + path.suffix.lower()
-        with path.open("rb") as stream:
-            digest = hashlib.file_digest(stream, "sha256").hexdigest()
-        guides.append({**request, "kind": kind, "frames": frames, "dimensions": dimensions, "audio_seconds": seconds,
-                       "filename": subfolder + "/" + name, "sha256": digest})
-        uploads.append((name, path, digest))
-    _add_guides(bundle, guides, schema, timeline)
-    for name, path, digest in uploads:
-        with path.open("rb") as stream:
-            reply = client.post(base + "/upload/image",
-                                files={"image": (name, stream, mimetypes.guess_type(name)[0] or "application/octet-stream")},
-                                data={"type": "input", "subfolder": subfolder, "overwrite": "false"}, timeout=180)
-        reply.raise_for_status()
-        result = reply.json()
-        if result.get("type") != "input" or result.get("name") != name or result.get("subfolder", "").replace(chr(92), "/") != subfolder:
-            raise ValueError("The renderer stored the guide at an unexpected location.")
-        _verify_input(client, base, subfolder + "/" + name, digest)
+    with tempfile.TemporaryDirectory() as temp:
+        for index, request in enumerate(spec.get("guides", [])):
+            kind = request.get("kind", "image")
+            path = Path(resolve_asset(request["asset_id"])).resolve(strict=True)
+            if not 0 < path.stat().st_size <= 256 * 1024 * 1024:
+                raise ValueError("Timed guides must fit within 256 MB each.")
+            guide = {**request, "kind": kind, **_probe_guide(path, kind, request.get("with_audio", False))}
+            with path.open("rb") as stream:
+                guide["source_sha256"] = hashlib.file_digest(stream, "sha256").hexdigest()
+            name = f"guide-{index}" + path.suffix.lower()
+            digest = guide["source_sha256"]
+            layout = guide_layout(guide["frame"], guide["frames"], timeline, audio_seconds=guide["audio_seconds"])
+            if kind == "video":
+                name = f"guide-{index}-24fps.mp4"
+                conformed = Path(temp) / name
+                _conform_video(path, conformed, guide, layout)
+                path = conformed
+            elif kind == "audio" and guide["audio_seconds"] > layout["delivered_audio_seconds"]:
+                name = f"guide-{index}-cut.wav"
+                conformed = Path(temp) / name
+                samples = round(layout["delivered_audio_seconds"] * 48000)
+                media._run([*media._ffmpeg(), "-protocol_whitelist", "file,pipe", "-format_whitelist", media.AUDIO_FORMATS,
+                            "-i", str(path), "-map", "0:a:0", "-af", f"aresample=48000,atrim=end_sample={samples}",
+                            "-c:a", "pcm_s24le", str(conformed)])
+                path = conformed
+            if path.parent == Path(temp):
+                with path.open("rb") as stream:
+                    digest = hashlib.file_digest(stream, "sha256").hexdigest()
+            guides.append({**guide, "filename": subfolder + "/" + name, "sha256": digest})
+            uploads.append((name, path, digest))
+        _add_guides(bundle, guides, schema, timeline)
+        for name, path, digest in uploads:
+            with path.open("rb") as stream:
+                reply = client.post(base + "/upload/image",
+                                    files={"image": (name, stream, mimetypes.guess_type(name)[0] or "application/octet-stream")},
+                                    data={"type": "input", "subfolder": subfolder, "overwrite": "false"}, timeout=180)
+            reply.raise_for_status()
+            result = reply.json()
+            if result.get("type") != "input" or result.get("name") != name or result.get("subfolder", "").replace(chr(92), "/") != subfolder:
+                raise ValueError("The renderer stored the guide at an unexpected location.")
+            _verify_input(client, base, subfolder + "/" + name, digest)
     return bundle
 
 

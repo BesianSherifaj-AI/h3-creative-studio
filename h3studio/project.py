@@ -138,7 +138,9 @@ class Project:
 
     def state(self):
         with closing(self._connect()) as db:
-            return json.loads(db.execute("SELECT document FROM project WHERE id=1").fetchone()[0])
+            state = json.loads(db.execute("SELECT document FROM project WHERE id=1").fetchone()[0])
+        self._refresh_continuity(state)
+        return state
 
     @contextmanager
     def transaction(self):
@@ -146,6 +148,10 @@ class Project:
             db.execute("BEGIN IMMEDIATE")
             state = json.loads(db.execute("SELECT document FROM project WHERE id=1").fetchone()[0])
             yield state
+            self._refresh_continuity(state)
+            for shot in state["shots"].values():
+                if shot.get("locked_take") and shot["selected_take"] != shot["locked_take"]:
+                    raise ValueError("Unlock the selected take in its Film storyboard before changing it.")
             raw = json.dumps(state, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
             db.execute("UPDATE project SET document=? WHERE id=1", (raw,))
 
@@ -308,8 +314,7 @@ class Project:
                                      "video_asset": video_asset, "packet_asset": packet_asset, "packet": packet,
                                      "parent_take": parent_take, "trim": self._take_trim(settings), "duration": shot["duration"]}
             shot["takes"].append(ident)
-            shot["selected_take"] = ident
-            self._mark_dependents(state, shot_id, ident)
+            shot["selected_take"] = shot.get("locked_take") or ident
         return ident
 
     @staticmethod
@@ -328,11 +333,22 @@ class Project:
             return {"start_frame":native[0], "end_frame":native[1]-1}
 
     @staticmethod
-    def _mark_dependents(state, shot_id, take_id):
-        for child in state["shots"].values():
-            parent = state["takes"].get(child.get("parent_take"), {})
-            if parent.get("shot") == shot_id:
-                child["needs_review"] = parent["id"] != take_id
+    def _refresh_continuity(state):
+        """Review the actual adjacent takes in the cut, including inherited retry lineage."""
+        shots, takes = state["shots"], state["takes"]
+        previous_take, previous_review = None, False
+        for shot_id in state["cut"]:
+            shot = source = shots[shot_id]
+            visited = set()
+            while source.get("branch_action") == "retry" and source["id"] not in visited:
+                visited.add(source["id"])
+                original = takes.get(source.get("parent_take"), {})
+                source = shots.get(original.get("shot"), {})
+            expected = source.get("parent_take") if source.get("branch_action") == "continue" else None
+            review = bool(expected and (expected != previous_take or previous_review))
+            if expected or "needs_review" in shot:
+                shot["needs_review"] = review
+            previous_take, previous_review = shot.get("selected_take"), review
 
     def select_take(self, shot_id, take_id):
         with self.transaction() as state:
@@ -341,7 +357,6 @@ class Project:
                 raise ValueError("The take does not belong to this shot.")
             self._remember_cut(state)
             shot["selected_take"] = take_id
-            self._mark_dependents(state, shot_id, take_id)
 
     def branch_take(self, take_id, action, name=None):
         if action not in ("continue", "retry", "scene"):
@@ -377,18 +392,25 @@ class Project:
     def choose_start(self, shot_id, mode, revision=None):
         """Record the explicit choice if the displayed ending differs from saved motion."""
         with self.transaction() as state:
-            shot = _lookup(state,"shots",shot_id)
-            if shot.get("branch_action") != "continue" or mode not in shot.get("start_modes",[]):
-                raise ValueError("That continuation start is unavailable.")
-            if revision:
-                _lookup(state,"revisions",revision)
-            if mode in ("visual","regenerate") and not revision:
-                parent = _lookup(state,"takes",shot["parent_take"])
-                if not parent.get("video_asset") in state["assets"]:
-                    raise ValueError("Relink the displayed video or select an edited ending revision.")
-            shot.update(start_mode=mode,start_revision=revision)
-            if revision and mode in ("visual","regenerate"):
-                shot["guides"] = [{"frame":0,"revision":revision,"role":"image"}] + [g for g in shot["guides"] if g.get("frame") != 0]
+            self.apply_start(state, _lookup(state,"shots",shot_id), mode, revision)
+
+    @staticmethod
+    def apply_start(state, shot, mode, revision=None):
+        if shot.get("branch_action") != "continue" or mode not in shot.get("start_modes",[]):
+            raise ValueError("That continuation start is unavailable.")
+        if mode == "original_motion":
+            revision = None
+        elif revision:
+            _lookup(state,"revisions",revision)
+        elif _lookup(state,"takes",shot["parent_take"]).get("video_asset") not in state["assets"]:
+            raise ValueError("Relink the displayed video or select an edited ending revision.")
+        # Older releases inserted a generated image guide alongside the start choice.
+        # Its exact record has no user-supplied usage; new choices keep guides independent.
+        if not shot.get("independent_start") and shot.get("start_revision"):
+            old = {"frame":0,"role":"image","revision":shot["start_revision"]}
+            if shot["guides"][:1] == [old]:
+                shot["guides"] = shot["guides"][1:]
+        shot.update(start_mode=mode,start_revision=revision,independent_start=True)
 
     def _apply_cut(self, state, entries):
         if not entries:
@@ -401,7 +423,6 @@ class Project:
         state["cut"] = [entry["shot"] for entry in entries]
         for entry in entries:
             state["shots"][entry["shot"]]["selected_take"] = entry.get("take")
-            self._mark_dependents(state,entry["shot"],entry.get("take"))
 
     def restore_cut(self, index):
         with self.transaction() as state:

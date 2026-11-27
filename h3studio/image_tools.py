@@ -16,7 +16,60 @@ from vendor.prompt.resources import local_url
 from .project import _size
 
 
-def _masked_result(original, edited, mask, task):
+def _smooth_repair(original, edited, mask):
+    """Match an evenly lit background only where surrounding samples support a smooth fit."""
+    import cv2
+    import numpy as np
+    x, y, w, h = cv2.boundingRect(mask)
+    if min(w,h) < 8:
+        return None
+    margin = max(8,min(80,round(min(w,h)*.28)))
+    left, top = max(0,x-margin), max(0,y-margin)
+    box = np.s_[top:y+h+margin,left:x+w+margin]
+    area, target = original[box], mask[box]
+    # A bounded perimeter fit rejects subject edges and nearby objects.
+    outside = (target == 0).astype(np.uint8)
+    distance = cv2.distanceTransform(outside,cv2.DIST_L2,3)
+    yy, xx = np.nonzero((distance >= 2) & (distance <= margin))
+    if len(xx)<80:
+        return None
+    step=max(1,len(xx)//4096)
+    xx, yy = xx[::step], yy[::step]
+    values=area[yy,xx].astype(float)
+    def design(px, py):
+        u=(px+left-x)/w-.5
+        v=(py+top-y)/h-.5
+        return np.stack((np.ones_like(u),u,v),axis=-1)
+    basis=design(xx,yy)
+    # A nearby object can contaminate a sizeable portion of the ring. Select
+    # a plane supported by scattered background pixels before least squares.
+    rng=np.random.default_rng(19)
+    best=np.zeros(len(xx),dtype=bool)
+    for _ in range(64):
+        sample=rng.choice(len(xx),3,replace=False)
+        if abs(np.linalg.det(basis[sample])) < .05:
+            continue
+        candidate=np.linalg.solve(basis[sample],values[sample])
+        if np.max(np.abs(candidate[1:])) > 65:
+            continue
+        inside=abs(values-basis@candidate).max(axis=1)<=5
+        if inside.sum()>best.sum():
+            best=inside
+    if best.mean()<.55:
+        return None
+    fit=np.linalg.lstsq(basis[best],values[best],rcond=None)[0]
+    # Retain fine grain from the generated fill while replacing broad residual shadows.
+    proposal=edited[box].astype(np.float32)
+    grain=proposal-cv2.GaussianBlur(proposal,(0,0),2)
+    repaired=edited.copy()
+    for row in range(0,area.shape[0],96):
+        py,px=np.mgrid[row:min(area.shape[0],row+96),:area.shape[1]]
+        color=design(px,py)@fit+np.clip(grain[row:row+96],-5,5)
+        repaired[box][row:row+96]=np.rint(color).clip(0,255).astype(np.uint8)
+    return repaired
+
+
+def _masked_result(original, edited, mask, task, surface="auto"):
     if task not in ("remove","recolor"):
         return Image.composite(edited,original,mask)
     import cv2
@@ -26,12 +79,19 @@ def _masked_result(original, edited, mask, task):
     if task == "remove":
         # Fit the proposed repair to the surrounding light before applying the exact selection.
         region = np.where(np.asarray(mask)>0,255,0).astype(np.uint8)
+        matched = _smooth_repair(original_rgb,edited_rgb,region) if surface == "auto" else None
         region[[0,-1],:] = 0
         region[:,[0,-1]] = 0
         x,y,w,h = cv2.boundingRect(region)
         if min(w,h) < 4:
             return Image.composite(edited,original,mask)
         color = cv2.seamlessClone(edited_rgb,original_rgb,region,(x+w//2,y+h//2),cv2.NORMAL_CLONE)
+        if matched is not None:
+            # Keep the natural contact shadow at the edge of the editable region.
+            inside=(np.asarray(mask)>0).astype(np.uint8)
+            feather=np.clip(cv2.distanceTransform(inside,cv2.DIST_L2,3)/max(4,min(36,min(w,h)*.22)),0,1)[...,None]
+            weight=feather*feather*(3-2*feather)
+            color=np.rint(color*(1-weight)+matched*weight).astype(np.uint8)
     else:
         # Retain each source pixel's luminance, including leather grain, seams and reflections.
         weights = np.array([.299,.587,.114],dtype=np.float32)
@@ -167,6 +227,10 @@ def prepare_image(studio, p, a, doc):
     if not isinstance(prompt,str) or not prompt.strip() or len(prompt)>6000:
         raise ValueError("Enter an image prompt of up to 6000 characters.")
     spec = dict(model=model,task=task,prompt=prompt,seed=_int(a.get("seed",0),0,2**53-1,"Seed"))
+    if task == "remove":
+        spec["surface"] = a.get("surface","auto")
+        if spec["surface"] not in ("auto","texture"):
+            raise ValueError("Choose automatic surface matching or generated texture.")
     if task == "create":
         for key in ("width","height"):
             value = _int(a.get(key,768),256,2048,key.title())
@@ -265,7 +329,7 @@ def adopt_image(studio, p, pl, receipt, job):
             original = _read(p.asset_path(generation["original"]),"RGBA")
             if mask.size != canvas or original.size != canvas:
                 raise ValueError("Saved mask or original differs from the requested canvas.")
-            rendered = _masked_result(original,rendered,mask,spec.get("task"))
+            rendered = _masked_result(original,rendered,mask,spec.get("task"),spec.get("surface","auto"))
         label = f"Layer {i}" if layered else item.get("filename","Image")
         asset = _store(p,_png(rendered),label+".png")
         layers.append(dict(name=label,asset=asset))

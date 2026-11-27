@@ -77,7 +77,8 @@ class ProjectTests(unittest.TestCase):
         child = self.project.branch_take(t,"continue")
         self.assertEqual(self.project.state()["shots"][child]["start_mode"],"choose_ending")
         self.project.choose_start(child,"visual",revision=r)
-        self.assertEqual(self.project.state()["shots"][child]["guides"][0]["revision"],r)
+        self.assertEqual(self.project.state()["shots"][child]["start_revision"],r)
+        self.assertEqual(self.project.state()["shots"][child]["guides"],[])
         self.project.set_guides(sh,[guides[0]])
         reroll = self.project.save_take(sh,dict(settings,seed=100))
         self.assertTrue(self.project.state()["shots"][child]["needs_review"])
@@ -90,6 +91,50 @@ class ProjectTests(unittest.TestCase):
         self.project.restore_cut(index)
         self.assertEqual(self.project.state()["cut"],[sh])
         self.assertEqual(self.project.state()["shots"][sh]["selected_take"],t)
+
+    def test_retry_replacement_reviews_downstream_and_restoring_reconciles(self):
+        p = self.project
+        a = p.add_shot("A",5)
+        take_a = p.save_take(a,{"seed":1})
+        b = p.branch_take(take_a,"continue")
+        take_b = p.save_take(b,{"seed":2})
+        c = p.branch_take(take_b,"continue")
+        take_c = p.save_take(c,{"seed":3})
+        d = p.branch_take(take_c,"scene")
+        take_d = p.save_take(d,{"seed":4})
+        original = [{"shot":s,"take":t} for s,t in [(a,take_a),(b,take_b),(c,take_c),(d,take_d)]]
+        alternative = p.branch_take(take_a,"retry")
+        alt_take = p.save_take(alternative,{"seed":5})
+        replacement = [{"shot":alternative,"take":alt_take},*original[1:]]
+        reopened = Project(p.folder)
+        def check(review):
+            doc = Project(p.folder).state()
+            self.assertEqual([doc["shots"][s].get("needs_review",False) for s in (b,c,d)], [review,review,False])
+            self.assertEqual(doc["shots"][b]["parent_take"],take_a)
+            self.assertEqual(doc["takes"][take_b]["parent_take"],take_a)
+            self.assertEqual(doc["takes"][take_c]["parent_take"],take_b)
+            self.assertEqual(doc["shots"][alternative]["parent_take"],take_a)
+        check(True)
+        reopened.restore_cut(reopened.state()["cut_history"].index(original))
+        check(False)
+        reopened.restore_cut(reopened.state()["cut_history"].index(replacement))
+        check(True)
+
+    def test_switching_legacy_injected_start_preserves_authored_cues(self):
+        p = self.project
+        a = self.image("paint.png","orange")
+        r = p.save_composition("Last frame",8,8,[{"asset":a}])
+        shot = p.add_shot("A",5)
+        packet = p.add_asset(motion_packet(self.root/"video.mmh3"))
+        t = p.save_take(shot,{"seed":123},video_asset=a,packet_asset=packet)
+        child = p.branch_take(t,"continue")
+        authored = [{"frame":0,"role":"image","revision":r,"usage":"both"},
+                    {"frame":0,"role":"video","asset":a},{"frame":0,"role":"audio","asset":a}]
+        with p.transaction() as state:
+            state["shots"][child].update(start_mode="visual",start_revision=r,
+                                        guides=[{"frame":0,"role":"image","revision":r},*authored])
+        Project(p.folder).choose_start(child,"original_motion")
+        self.assertEqual(Project(p.folder).state()["shots"][child]["guides"],authored)
 
     def test_portability_and_conflicting_filenames(self):
         a = self.image("source.png","red")

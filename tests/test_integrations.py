@@ -1,6 +1,7 @@
 """Desktop engine actions through real project/queue storage with synthetic Comfy I/O."""
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,7 +13,7 @@ from h3studio import generation
 from h3studio.integrations import engine_action
 from h3studio.jobs import Queue
 from h3studio.project import Project
-from test_generation import setup_case
+from test_generation import node_schema, setup_case
 from test_project import motion_packet
 
 
@@ -83,6 +84,96 @@ def test_motion_and_visual_branch_use_exact_displayed_take(tmp_path, setup_studi
     m = plan["manifest"]
     assert m["timeline"]["trim"] == [4,124] and m["mmh3"]["save_enabled"]
     assert m["guides"][0]["frame_idx"] == 4 and m["guides"][-1]["frame_idx"] == 123
+
+
+def test_continuation_review_commits_only_on_approval_and_keeps_other_tracks(tmp_path, setup_studio, monkeypatch):
+    studio,p,shot,rev,fake = setup_studio
+    fake.schema.update({
+        "LoadVideo":node_schema({"file":[["example.mp4"]]},["VIDEO"]),
+        "GetVideoComponents":node_schema({"video":["VIDEO"]},["IMAGE","AUDIO","FLOAT"]),
+        "LoadAudio":node_schema({"audio":[["example.wav"]]},["AUDIO"]),
+    })
+    clip = tmp_path / "cue.mp4"
+    sound = tmp_path / "cue.wav"
+    subprocess.run(["ffmpeg","-loglevel","error","-f","lavfi","-i","color=blue:s=64x48:r=24","-frames:v","5",str(clip)],check=True)
+    subprocess.run(["ffmpeg","-loglevel","error","-f","lavfi","-i","sine=duration=0.25",str(sound)],check=True)
+    audio,video = p.add_asset(sound),p.add_asset(clip)
+    packet = p.add_asset(motion_packet(tmp_path / "source.mmh3"))
+    fake.card.update(id="packet-1",geometry={"width":128,"height":64,"frames":124,"fps":24})
+    take = p.save_take(shot,{"motion_revision":"saved-revision","motion_selector":"output::mmh3/source.mmh3",
+                            "delivery_trim":[0,5.0],"seed":123},packet_asset=packet)
+    child = p.branch_take(take,"continue")
+    tracks = [{"role":"image","frame":0,"revision":rev,"usage":"timed"},
+              {"role":"video","frame":0,"asset":video},{"role":"audio","frame":0,"asset":audio},
+              {"role":"last","frame":119,"revision":rev}]
+    p.set_guides(child,tracks)
+    painted = p.save_composition("Painted start",64,48,[])
+    args = {"mode":"t2va","shot":child,"prompt":"A river moves.","start_mode":"visual","start_revision":painted}
+    def shot_state():
+        return Project(p.folder).state()["shots"][child]
+    before = shot_state()
+    with pytest.raises(ValueError,match="Unknown"):
+        engine_action(studio,p,"prepare",{**args,"start_revision":"missing"})
+    assert shot_state() == before
+    preview = engine_action(studio,p,"prepare",args)
+    assert shot_state() == before and not studio.queue.list()
+    assert [g["kind"] for g in preview["manifest"]["guides"]] == ["image","video","audio","image"]
+    assert preview["manifest"]["guides"][0]["revision"] == painted
+    assert preview["manifest"]["start_choice"] == {"mode":"visual","revision":painted}
+    def approve(plan):
+        return engine_action(studio,Project(p.folder),"submit_prepared",{"plan":plan["plan"]})
+    with monkeypatch.context() as fault:
+        def reject(*args,**kwargs): raise ValueError("Out of disk space")
+        fault.setattr(studio.queue,"enqueue",reject)
+        with pytest.raises(ValueError,match="disk"): approve(preview)
+    assert shot_state() == before and not studio.queue.list()
+    first = approve(preview)
+    selected = shot_state()
+    assert selected["guides"] == tracks and selected["start_revision"] == painted and selected["start_mode"] == "visual"
+    motion = engine_action(studio,p,"prepare",{**args,"start_mode":"original_motion"})
+    assert motion["manifest"]["parent"]["take_id"] == take
+    assert motion["manifest"]["guides"][0]["revision"] == rev
+    assert shot_state() == selected
+    approve(motion)
+    assert shot_state()["guides"] == tracks and shot_state()["start_revision"] is None
+    assert approve(preview)["id"] == first["id"] and shot_state()["start_mode"] == "original_motion"
+    stale = engine_action(studio,p,"prepare",args)
+    p.set_guides(child,tracks[1:])
+    with pytest.raises(ValueError,match="guides changed"): approve(stale)
+    assert len(studio.queue.list()) == 2 and shot_state()["guides"] == tracks[1:]
+
+
+def test_cpu_storyboard_renders_the_approved_visual_start(tmp_path, setup_studio):
+    from h3studio.application import Studio
+    from h3studio.media import frame_index, extract_frame
+    _,p,shot,original,_ = setup_studio
+    paint = tmp_path/"painted.png"
+    Image.new("RGB",(64,48),"blue").save(paint)
+    revision = p.save_composition("Blue",64,48,[{"asset":p.add_asset(paint)}])
+    take = p.save_take(shot,{"seed":1})
+    child = p.branch_take(take,"continue")
+    guides = [{"frame":0,"role":"first_frame","revision":original},{"frame":119,"role":"last","revision":original}]
+    p.set_guides(child,guides)
+    p.choose_start(child,"visual",revision)
+    studio = Studio(tmp_path/"home",p.folder)
+    try:
+        job = studio.action("storyboard",{"shot":child,"width":64,"height":48})["task"]
+        studio.pool.submit(lambda:None).result(30)
+        assert studio.tasks[job]["state"] == "completed", studio.tasks[job]
+        result = p.state()["takes"][studio.tasks[job]["result"]["take"]]
+        assert result["settings"]["start_choice"] == {"mode":"visual","revision":revision}
+        assert result["guides"][0]["revision"] == revision and p.state()["shots"][child]["guides"] == guides
+        source = p.asset_path(result["video_asset"])
+        frames = frame_index(source)
+        assert len(frames)==120
+        for i,expected in [(0,(0,0,255)),(119,(255,165,0))]:
+            path = tmp_path/f"decoded-{i}.png"
+            extract_frame(source,frames[i]["pts"],path)
+            with Image.open(path) as image:
+                pixel = image.convert("RGB").getpixel((32,24))
+            assert max(abs(x-y) for x,y in zip(pixel,expected))<=5
+    finally:
+        studio.close()
 
 
 def test_adopt_receipt_packet_and_idempotent_retry(tmp_path, setup_studio):

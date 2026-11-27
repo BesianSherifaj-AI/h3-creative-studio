@@ -27,6 +27,9 @@ async def _storyboard(payload):
     rule = {"game": "game-engine.txt", "film": "cinematic-fl2va.txt"}[payload.get("mode", "film")]
     root = Path(__file__).resolve().parents[1]
     instruction = (root / "vendor" / "prompt" / "system-prompts" / rule).read_text(encoding="utf-8-sig")
+    if payload.get("director_request"):
+        instruction += ("\nThis Studio request is a production planning step. Use the user's requested JSON schema "
+                        "instead of the single-video prompt format. Return only JSON. Preserve the directing and continuity rules.")
     async with httpx.AsyncClient(trust_env=False, timeout=180) as client:
         models = await client.get(base + "/models")
         models.raise_for_status()

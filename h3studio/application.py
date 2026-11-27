@@ -48,7 +48,8 @@ class Studio:
                 folder = None
         if not folder:
             self.project = Project(demo) if (demo / Project.DATABASE).is_file() else create_demo(demo)
-        self.queue = Queue(self.home / 'queue', before_dispatch=lambda url: release_idle_peers(self.home,url))
+        self.queue = Queue(self.home / 'queue', before_dispatch=lambda url:release_idle_peers(self.home,url),
+                           check_occupancy=lambda url:release_idle_peers(self.home,url,release=False))
         self.lock = threading.RLock()
         self.stop = threading.Event()
         self.tasks = {}
@@ -214,16 +215,33 @@ class Studio:
             if op=='branch':
                 return {'shot':p.branch_take(a['take'],a['action'],a.get('name'))}
             if op == 'storyboard':
-                shot = p.state()['shots'][a['shot']]
-                guides = copy.deepcopy(shot['guides'])
-                visual = [dict(frame=g['frame'],path=self._revision(p,g['revision']) if g.get('revision') else p.asset_path(g['asset']))
-                          for g in guides if g.get('role','image')=='image']
+                from .integrations import _ending_guide, _kind, _visual_guides
+                doc = p.state()
+                shot = doc['shots'][a['shot']]
                 def draw(cancel):
                     with tempfile.TemporaryDirectory() as tmp:
                         path = Path(tmp)/'Storyboard.mp4'
+                        ending = Path(tmp)/'Displayed ending.png'
+                        guides = copy.deepcopy(shot['guides'])
+                        if shot.get('start_mode') in ('visual','regenerate'):
+                            first = _ending_guide(p,doc['takes'][shot['parent_take']],shot,ending)
+                            guides = _visual_guides(guides,first,'t2va')
+                        visual = []
+                        for guide in guides:
+                            if _kind(guide) != 'image' or guide.get('usage') == 'reference':
+                                continue
+                            if ending.exists() and guide is guides[0]:
+                                source = ending
+                            else:
+                                source = self._revision(p,guide['revision']) if guide.get('revision') else p.asset_path(guide['asset'])
+                            visual.append({'frame':guide['frame'],'path':source})
                         receipt = media.render_storyboard(visual,path,frames=round(shot['duration']*24),
                                                           width=int(a.get('width',960)),height=int(a.get('height',540)),cancel=cancel)
                         receipt.pop('path',None)
+                        if ending.exists():
+                            p.add_asset(ending)
+                        if shot.get('start_mode'):
+                            receipt['start_choice'] = {'mode':shot['start_mode'],'revision':shot.get('start_revision')}
                         asset = p.add_asset(path)
                         return {'take':p.save_take(shot['id'],receipt,asset,guides=guides)}
                 return self._background('Render storyboard · '+shot['name'],draw)
@@ -235,7 +253,7 @@ class Studio:
                     from .editor import playback_proxy
                     with tempfile.TemporaryDirectory() as tmp:
                         preview = Path(tmp)/'Playback proxy.mp4'
-                        playback_proxy(p.asset_path(asset),preview)
+                        options['preview_timing'] = playback_proxy(p.asset_path(asset),preview)['timing']
                         options['preview_asset'] = p.add_asset(preview)
                 shot = p.add_shot(Path(a['path']).stem,meta['duration'])
                 take = p.save_take(shot,options,asset)
@@ -251,6 +269,9 @@ class Studio:
                 if parent_job := opts.pop('job_id',None):
                     opts['source_job_id'] = parent_job
                 return {'take':p.save_take(take['shot'],opts,take['video_asset'],take.get('packet_asset'),take['id'],guides=take['guides'])}
+            if op == 'compare_finish':
+                from .playback import finish_comparison
+                return finish_comparison(self,p,a)
             if op in ('frame','frame_branch','edit_anchor','edit_range','edit_info','paint_layer'):
                 from .editor import editor_action
                 return editor_action(self,p,op,a)
@@ -262,6 +283,31 @@ class Studio:
                     p._remember_cut(doc)
                     doc['cut']=order
                 return {}
+            if op in ('soundtrack_save','soundtrack_remove'):
+                ident = a.get('id')
+                existing = p.state().get('soundtracks',{}).get(ident)
+                if (ident or op == 'soundtrack_remove') and not existing:
+                    raise ValueError('The selected soundtrack no longer exists.')
+                if op == 'soundtrack_remove':
+                    with p.transaction() as doc:
+                        del doc['soundtracks'][ident]
+                    return {}
+                if not a.get('path') and not existing:
+                    raise ValueError('Choose an audio file to add to the film.')
+                path = Path(a['path']) if a.get('path') else p.asset_path(existing['asset'])
+                stream, track = a.get('stream',0), a.get('track',0)
+                if type(stream) is not int or not 0 <= stream < media.audio_stream_count(path):
+                    raise ValueError('Choose an available source audio stream (starting at 1).')
+                offset, gain = media._ratio(a.get('offset',0)), media._ratio(a.get('gain_db',0))
+                if offset < 0 or not -96 <= gain <= 24 or type(track) is not int or not 0 <= track < 8:
+                    raise ValueError('Check the soundtrack offset, gain and output track.')
+                asset = p.add_asset(path) if a.get('path') else existing['asset']
+                ident = ident or uuid.uuid4().hex
+                bed = dict(id=ident,name=a.get('name') or (existing or {}).get('name') or path.stem,
+                           asset=asset,offset=float(offset),gain_db=float(gain),stream=stream,track=track)
+                with p.transaction() as doc:
+                    doc.setdefault('soundtracks',{})[ident] = bed
+                return bed
             if op == 'export':
                 doc = p.state()
                 clips = []
@@ -276,11 +322,12 @@ class Studio:
                     if options.get('audio_route'):
                         item['audio'] = options['audio_route']
                     clips.append(item)
+                beds = [{**b,'path':p.asset_path(b['asset'])} for b in doc.get('soundtracks',{}).values()]
                 out = Path(a['path'])
                 if out.exists():
                     raise ValueError('Choose a new export filename to preserve the existing film.')
                 return self._background('Export film',lambda cancel: media.export_film(clips,out,
                     width=int(a['width']),height=int(a['height']),fps=str(a['fps']),color=a['color'],
-                    audio_tracks=int(a['audio_tracks']),cancel=cancel))
+                    audio_tracks=int(a['audio_tracks']),cancel=cancel,soundtracks=beds))
             from .integrations import engine_action
             return engine_action(self, p, op, a)

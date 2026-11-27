@@ -14,7 +14,7 @@ import uuid
 import httpx
 import psutil
 
-from .jobs import game_guard
+from .jobs import DispatchWaiting, game_guard, verify_queue_idle
 
 
 _PORTS = {"video":8021, "image":8022}
@@ -315,23 +315,44 @@ def guard_engines(home):
     return [stop_engine(home,k) for k in marked]
 
 
-def release_idle_peers(home,active_url):
-    """Ask an idle owned peer to release cached models before another worker takes the GPU."""
-    released=[]
+def release_idle_peers(home,active_url,*,release=True):
+    """Defer all new GPU jobs if an owned renderer is busy or unverifiable."""
+    peers=[]
     for kind in _PORTS:
         base=_base(home,kind)
         receipt=_read(base)
-        if not receipt or receipt.get("closed"):
+        if not (base/"owner.json").is_file():
             continue
-        port=receipt["port"]
-        if active_url.rstrip("/") in (f"http://127.0.0.1:{port}",f"http://localhost:{port}"):
+        label=f"owned {kind} renderer"
+        if not isinstance(receipt,dict):
+            raise DispatchWaiting(f"Waiting to verify the {label} ownership record.")
+        if receipt.get("closed"):
             continue
-        procs=_owned(base,receipt)
-        if procs and _listener_owned(procs,port):
-            try:
-                if _idle(port):
-                    _request(port,"/free",{"unload_models":True,"free_memory":True})
-                    released.append(kind)
-            except (httpx.HTTPError,ValueError):
-                continue
+        try:
+            port=receipt["port"]
+            procs=_owned(base,receipt)
+            if not procs:
+                # A dead or reused PID is no longer our worker. A matching live
+                # process with inaccessible command/ownership data must hold the slot.
+                owner=psutil.Process(receipt["pid"])
+                if abs(owner.create_time()-receipt["created"])>.001:
+                    continue
+                raise DispatchWaiting(f"Waiting to verify the {label} process.")
+            if not _listener_owned(procs,port):
+                raise DispatchWaiting(f"Waiting for the {label} listener.")
+            verify_queue_idle(_request(port,"/queue"),label)
+        except psutil.NoSuchProcess:
+            continue
+        except (psutil.Error,httpx.HTTPError,OSError,ValueError,TypeError,KeyError) as exc:
+            raise DispatchWaiting(f"Waiting to verify the {label} queue.") from exc
+        if release and active_url.rstrip("/") not in (f"http://127.0.0.1:{port}",f"http://localhost:{port}"):
+            peers.append((kind,port))
+    released=[]
+    for kind,port in peers:
+        try:
+            verify_queue_idle(_request(port,"/queue"),f"owned {kind} renderer")
+            _request(port,"/free",{"unload_models":True,"free_memory":True})
+            released.append(kind)
+        except (httpx.HTTPError,OSError,ValueError) as exc:
+            raise DispatchWaiting(f"Waiting for the owned {kind} renderer to release its GPU memory.") from exc
     return released

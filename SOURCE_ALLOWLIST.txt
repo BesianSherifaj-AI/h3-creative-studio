@@ -9,6 +9,7 @@ h3studio/__init__.py
 h3studio/application.py
 h3studio/assembly.py
 h3studio/demo.py
+h3studio/director.py
 h3studio/editor.py
 h3studio/engine_controls.py
 h3studio/finish_worker.py
@@ -20,9 +21,11 @@ h3studio/media.py
 h3studio/media_edit.py
 h3studio/playback.py
 h3studio/project.py
+h3studio/recipes.py
 h3studio/recovery.py
 h3studio/runtime.py
 h3studio/server.py
+h3studio/web/director.js
 h3studio/web/editor.js
 h3studio/web/engines.js
 h3studio/web/index.html
@@ -35,6 +38,7 @@ scripts/verify_desktop.py
 studio.py
 tests/test_assembly.py
 tests/test_desktop_service.py
+tests/test_director.py
 tests/test_generation.py
 tests/test_image_tools.py
 tests/test_integrations.py
@@ -43,6 +47,8 @@ tests/test_jobs_worker.py
 tests/test_media.py
 tests/test_media_editor.py
 tests/test_media_join.py
+tests/test_media_review.py
+tests/test_media_seek.py
 tests/test_project.py
 tests/test_recovery.py
 tests/test_runtime.py

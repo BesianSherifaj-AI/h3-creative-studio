@@ -20,6 +20,7 @@ from PIL import Image, ImageOps
 
 MAX_FRAME_PIXELS = 33_554_432
 _FORMATS = "mov,matroska,avi,mpegts,mpeg,asf,flv,ogg,nut"
+AUDIO_FORMATS = _FORMATS + ",wav,mp3,flac,aac,aiff,ac3,eac3,au,caf,w64,tta,wv"
 _INPUT = ["-protocol_whitelist", "file,pipe", "-format_whitelist", _FORMATS]
 _HIDDEN = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
@@ -62,6 +63,16 @@ def _probe(path, args):
     if result.returncode:
         raise ValueError(result.stderr.decode("utf-8", "replace")[-2000:])
     return json.loads(result.stdout)
+
+
+def audio_stream_count(path):
+    result = subprocess.run([_bin("ffprobe"), "-v", "error", "-protocol_whitelist", "file,pipe",
+                             "-format_whitelist", AUDIO_FORMATS, "-select_streams", "a",
+                             "-show_entries", "stream=index", "-of", "csv=p=0", str(Path(path).resolve(strict=True))],
+                            capture_output=True, creationflags=_HIDDEN)
+    if result.returncode or not result.stdout.strip():
+        raise ValueError("Choose a soundtrack file containing decodable audio.")
+    return len(result.stdout.strip().splitlines())
 
 
 def _ratio(value):
@@ -152,7 +163,7 @@ def probe_media(path):
                 coded_width=w, coded_height=h, rotation=rotation, duration=float(duration),
                 start_pts=origin, duration_exact=str(duration), video_time_base=str(base),
                 video_stream=video["index"], fps=video.get("avg_frame_rate") or video["r_frame_rate"],
-                pix_fmt=video.get("pix_fmt"), color_transfer=transfer,
+                video_codec=video.get("codec_name"), pix_fmt=video.get("pix_fmt"), color_transfer=transfer,
                 color_space=video.get("color_space", "unknown"), color_range=video.get("color_range", "unknown"),
                 color_primaries=primaries,
                 audio_streams=[dict(index=s["index"], channels=s.get("channels", 0),
@@ -290,7 +301,7 @@ def render_storyboard(guides, output, *, frames=120, fps="24", width=768, height
 
 
 def export_film(clips, output, *, width=1920, height=1080, fps="24", color="bt709",
-                audio_tracks=1, cancel=None):
+                audio_tracks=1, cancel=None, soundtracks=()):
     _dimensions(width, height)
     rate = _positive_rate(fps)
     encoder = _encode(color)
@@ -347,9 +358,32 @@ def export_film(clips, output, *, width=1920, height=1080, fps="24", color="bt70
                              source_start=float(start), source_end=float(end)))
         total_frames, total_samples = boundary, sample_boundary
     graph.append("".join(video_labels) + f"concat=n={len(clips)}:v=1:a=0,setpts=N/({rate}*TB)[film]")
+    mixes = [[] for _ in audio_labels]
+    for index, bed in enumerate(soundtracks):
+        source, track = bed["path"], bed["track"]
+        if not 0 <= track < audio_tracks:
+            raise ValueError(f"Soundtrack {index+1} needs output audio track {track+1}.")
+        delay = round(_ratio(bed["offset"]) * 48000)
+        gain = _ratio(bed["gain_db"])
+        if delay < 0 or not -96 <= gain <= 24:
+            raise ValueError("Choose a nonnegative soundtrack offset and gain between -96 and +24 dB.")
+        if delay >= total_samples:
+            continue
+        inputs.extend(["-protocol_whitelist", "file,pipe", "-format_whitelist", AUDIO_FORMATS,
+                       "-i", str(Path(source).resolve(strict=True))])
+        input_number = len(clips) + sum(map(len, mixes))
+        label = f"bed{index}"
+        graph.append(f"[{input_number}:a:{bed['stream']}]asetpts=PTS-STARTPTS,aresample=48000,"
+                     f"aformat=sample_rates=48000:sample_fmts=fltp:channel_layouts=stereo,"
+                     f"volume={float(gain)}dB,adelay={delay}S:all=1,atrim=end_sample={total_samples}[{label}]")
+        mixes[track].append(f"[{label}]")
     for j, labels in enumerate(audio_labels):
-        graph.append("".join(labels) + f"concat=n={len(clips)}:v=0:a=1[track{j}]")
-    with _output(output, [c["path"] for c in clips]) as temp, tempfile.TemporaryDirectory() as folder:
+        base = f"base{j}" if mixes[j] else f"track{j}"
+        graph.append("".join(labels) + f"concat=n={len(clips)}:v=0:a=1[{base}]")
+        if mixes[j]:
+            graph.append(f"[{base}]" + "".join(mixes[j]) +
+                         f"amix=inputs={1+len(mixes[j])}:normalize=0:duration=first[track{j}]")
+    with _output(output, [c["path"] for c in clips] + [b["path"] for b in soundtracks]) as temp, tempfile.TemporaryDirectory() as folder:
         script = Path(folder) / "filters.txt"
         script.write_text(";\n".join(graph), encoding="utf-8")
         args = [*_ffmpeg(), "-copyts", *inputs, "-/filter_complex", str(script), "-map", "[film]"]

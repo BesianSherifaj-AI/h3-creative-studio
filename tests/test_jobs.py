@@ -102,8 +102,8 @@ def test_only_cancel_owned_id_and_guarded_worker(setup_queue):
     p = {"comfy_url": BASE, "prompt": GRAPH}
     owned = q.enqueue("video", p)["id"]
     foreign = str(uuid.uuid4())
-    renderer.pending[foreign] = [0, foreign, GRAPH, {"client_id": "another app"}, []]
     q.tick()
+    renderer.pending[foreign] = [0, foreign, GRAPH, {"client_id": "another app"}, []]
     games.append("RocketLeague.exe")
     restart().tick()
     restart().tick()
@@ -125,6 +125,40 @@ def test_cpu_worker_is_rejected_and_idempotent_submission(setup_queue):
     q.tick()
     assert not renderer.post_ids and "CPU mode" in q.get(ident)["message"]
     assert q.get(ident)["status"] == "failed"
+
+
+def test_external_target_work_and_abandoned_presubmit_reservation(setup_queue):
+    renderer,_,restart = setup_queue
+    q = restart()
+    ident = q.enqueue("video",{"comfy_url":BASE,"prompt":GRAPH})["id"]
+    renderer.pending["foreign"] = [0,"foreign",GRAPH,{"client_id":"external"},[]]
+    q.tick()
+    assert q.get(ident)["status"] == "queued" and not renderer.post_ids
+    assert "selected renderer" in q.get(ident)["message"]
+    q._update(ident,"starting","Dispatch reserved")
+    restart().tick()
+    assert q.get(ident)["status"] == "queued"
+    renderer.complete("foreign")
+    restart().tick()
+    restart().tick()
+    assert renderer.post_ids == [ident] and not renderer.interrupted
+
+
+def test_direct_job_appearing_during_validation_holds_dispatch(setup_queue,monkeypatch):
+    from h3studio import generation
+    from h3studio.jobs import DispatchWaiting
+    renderer,_,restart = setup_queue
+    q = restart()
+    peer = []
+    def check(_):
+        if peer: raise DispatchWaiting("Waiting for peer")
+    q.before_dispatch = q.check_occupancy = check
+    def validate(*args,**kwargs):
+        peer.append("foreign started during validation")
+    monkeypatch.setattr(generation,"validate_saved_take",validate)
+    ident = q.enqueue("video",{"comfy_url":BASE,"prompt":GRAPH,"manifest":{"transfer_id":"test"}})["id"]
+    q.tick()
+    assert q.get(ident)["status"] == "queued" and not renderer.post_ids
 
 
 def test_racing_desktop_instances_submit_once(setup_queue):

@@ -19,7 +19,7 @@
   async function brush({title,asset,old,initial,save,back}) {
     const [source, saved] = await Promise.all([img(asset),old ? img(old) : null]);
     const w = source.naturalWidth, h = source.naturalHeight;
-    const scale = Math.min(1, 820/w, 400/h);
+    const scale = Math.min(820/w, 400/h);
     const cw = Math.max(1,Math.round(w*scale)), ch = Math.max(1,Math.round(h*scale));
     const strokes = [];
     const opts = '<label class="field">Brush mode<select id="brushMode"><option value="add">Add to mask</option><option value="erase">Erase from mask</option></select></label>' +
@@ -99,13 +99,8 @@
       }});
   }
 
-  function selected() {
-    const {take,frame}=ui().get();
-    if(!take?.video_asset)throw Error("Choose a rendered or imported take.");
-    return {take:take.id,seconds:frame/24};
-  }
   async function openFrame() {
-    const r=await ui().api("frame",selected());
+    const r=await ui().api("frame",await ui().displayedPosition());
     await ui().setRevision(r.revision);ui().toast("Opened the source frame at PTS "+r.pts+".");
   }
   async function finish(r) {
@@ -119,7 +114,7 @@
   }
 
   async function range() {
-    const selection=selected();
+    const selection=await ui().displayedPosition();
     const info=await ui().api("edit_info",selection);
     const draft={start:info.source_index,end:Math.min(info.source_end,info.source_index+23),
                  at:info.source_index,action:"recolor",color:"#657dff",state:"keyframe"};
@@ -128,6 +123,125 @@
     const fields=()=>{draft.start=Number(by("rangeStart").value);draft.end=Number(by("rangeEnd").value);
       draft.at=Number(by("rangeAt").value);draft.action=by("rangeAction").value;draft.color=by("rangeColor").value;
       draft.state=by("rangeState").value;};
+    async function inspect() {
+      if (!Number.isInteger(draft.at) || draft.at<draft.start || draft.at>draft.end)
+        throw Error("Choose an inspection frame inside the range.");
+      const frame=await ui().api("edit_info",{take:selection.take,source_index:draft.at,propagate_from:draft.start,preview:true});
+      const tracking=frame.tracking;
+      const [source,mask]=await Promise.all([img(frame.asset),tracking.mask?img(tracking.mask):null]);
+      const scale=Math.min(820/source.width,380/source.height);
+      const w=Math.max(1,Math.round(source.width*scale)),h=Math.max(1,Math.round(source.height*scale));
+      const status={tracked:"Propagated mask",keyframe:"Saved correction",reappears:"Reappearance correction",
+                    hidden:"Subject hidden",ambiguous:"Tracking needs a correction",unmarked:"No starting mask"};
+      const move=async index=>{draft.at=index;await inspect();};
+      ui().modal("Inspect tracked mask",
+        '<canvas id="trackOverlay" width="'+w+'" height="'+h+'" aria-label="Tracked source mask" style="display:block;max-width:100%;margin:auto"></canvas>'+
+        '<label><input type="checkbox" id="trackVisible" checked> Show mask overlay</label>'+
+        '<p id="trackStatus">'+ui().esc(status[tracking.state])+' · frame '+draft.at+' · PTS '+frame.pts+'</p>'+
+        (tracking.detail?'<p class="note">'+ui().esc(tracking.detail)+'</p>':'')+
+        '<div class="row"><button type="button" id="trackPrev">Previous</button>'+number("trackAt","Source frame",draft.at)+
+        '<button type="button" id="trackGo">Inspect frame</button><button type="button" id="trackNext">Next</button></div>',[
+          {label:"Back to range",run:panel},
+          {label:"Play from this frame",run:()=>play(draft.at)},
+          ...(tracking.at!=null && tracking.at!==draft.at?[{label:"Go to first uncertain frame",run:()=>move(tracking.at)}]:[]),
+          {label:"Correct this frame",primary:true,run:()=>brush({title:"Correct frame "+draft.at,asset:frame.asset,
+            old:tracking.mask,initial:mask?"current":"clear",back:inspect,save:async payload=>{
+              await ui().api("edit_anchor",{take:selection.take,source_index:draft.at,
+                state:tracking.state==="hidden"?"reappears":"keyframe",base_mask:tracking.mask,...payload});
+              await inspect();
+            }})}
+        ]);
+      const ctx=by("trackOverlay").getContext("2d");
+      const tint=document.createElement("canvas");tint.width=w;tint.height=h;
+      if(mask){
+        const mc=tint.getContext("2d",{willReadFrequently:true});mc.drawImage(mask,0,0,w,h);
+        const pixels=mc.getImageData(0,0,w,h);
+        for(let i=0;i<pixels.data.length;i+=4){
+          const alpha=Math.round(pixels.data[i]*.60);
+          pixels.data.set([79,162,250,alpha],i);
+        }
+        mc.putImageData(pixels,0,0);
+      }
+      const redraw=()=>{ctx.drawImage(source,0,0,w,h);if(mask && by("trackVisible").checked)ctx.drawImage(tint,0,0);};
+      by("trackVisible").onchange=redraw;redraw();
+      by("trackPrev").disabled=draft.at<=draft.start;by("trackNext").disabled=draft.at>=draft.end;
+      act("trackPrev",()=>move(draft.at-1));act("trackNext",()=>move(draft.at+1));
+      act("trackGo",()=>move(Number(by("trackAt").value)));
+    }
+    async function play(startAt) {
+      let samples=[],resume=null,next=null,stopped=false,raf=0,shown=startAt;
+      async function batch(index,prior) {
+        const data=await ui().api("edit_info",{take:selection.take,source_index:index,
+          propagate_from:draft.start,play_end:draft.end,resume:prior});
+        await Promise.all(data.samples.map(async s=>{
+          if(!s.overlay)return;
+          const image=new Image();image.src=s.overlay;await image.decode();s.image=image;
+        }));
+        return data;
+      }
+      const first=await batch(startAt,null);
+      if(!first.samples.length)throw Error("There are no review frames in this range.");
+      function use(data){
+        samples=data.samples;resume=data.resume;
+        next=resume?batch(resume.index+1,resume).catch(error=>({error})):null;
+      }
+      use(first);
+      ui().modal("Play tracked mask",
+        '<div style="position:relative;margin:auto;width:min(100%,'+Math.round(380*info.width/info.height)+'px)">'+
+        '<video id="trackMotion" playsinline preload="auto" style="display:block;width:100%"></video>'+
+        '<canvas id="motionOverlay" width="480" height="'+Math.max(1,Math.round(480*info.height/info.width))+
+        '" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></canvas></div>'+
+        '<p id="motionStatus" aria-live="off"></p><label><input type="checkbox" id="motionVisible" checked> Show tracked mask</label>',[
+          {label:"Pause and inspect",primary:true,run:()=>stop(shown)}
+        ]);
+      const v=by("trackMotion"),canvas=by("motionOverlay"),ctx=canvas.getContext("2d");
+      let generation=0;
+      function cleanup(){stopped=true;generation++;cancelAnimationFrame(raf);v.pause();}
+      async function stop(index){if(stopped)return;cleanup();draft.at=index;await inspect();}
+      const dialog=by("dialog");
+      dialog.addEventListener("close",cleanup,{once:true});
+      function paint(sample){
+        shown=sample.index;ctx.clearRect(0,0,canvas.width,canvas.height);
+        if(sample.image && by("motionVisible").checked)ctx.drawImage(sample.image,0,0,canvas.width,canvas.height);
+        by("motionStatus").textContent="Source frame "+sample.index+" · "+sample.state;
+      }
+      async function advance(seconds) {
+        if(stopped || !v.isConnected || !dialog.open)return;
+        const end=samples[samples.length-1];
+        if(seconds+.000002>=end.end){
+          if(end.state==="ambiguous" || !next){await stop(end.index);return;}
+          const prepared=next;
+          v.pause();
+          const data=await prepared;
+          if(stopped)return;
+          if(data.error)throw data.error;
+          use(data);
+          v.currentTime=samples[0].start;
+          await v.play();seconds=samples[0].start;
+        }
+        const sample=samples.findLast(s=>s.start<=seconds+.000002)||samples[0];
+        paint(sample);
+        if(sample.state==="ambiguous"){await stop(sample.index);return;}
+        const token=++generation;
+        // Native presentation timestamps keep the overlay on the sample decoded by WebView.
+        if(v.requestVideoFrameCallback){
+          v.requestVideoFrameCallback((_,m)=>{if(token===generation)advance(m.mediaTime).catch(issue);});
+        }else raf=requestAnimationFrame(()=>advance(v.currentTime).catch(issue));
+      }
+      v.onended=()=>stop(samples[samples.length-1].index).catch(issue);
+      v.onerror=()=>{cleanup();issue(Error("The source review video could not be decoded."));};
+      v.src="/take/"+encodeURIComponent(selection.take);
+      await new Promise((resolve,reject)=>{
+        if(v.readyState>=2)return resolve();
+        v.addEventListener("loadeddata",resolve,{once:true});
+        v.addEventListener("error",()=>reject(Error("Could not open source playback.")),{once:true});
+      });
+      if(stopped)return;
+      v.currentTime=samples[0].start;
+      paint(samples[0]);
+      if(samples[0].state==="ambiguous"){await stop(samples[0].index);return;}
+      await v.play();await advance(samples[0].start);
+    }
     async function panel() {
       const detail=await ui().api("edit_info",{take:selection.take,source_index:draft.at});
       const keys=detail.keys.map(k=>{
@@ -141,7 +255,8 @@
         '<label class="field">Correction<select id="rangeState"><option value="keyframe">Keyframe</option><option value="hidden">Hidden</option>'+
         '<option value="reappears">Reappears</option></select></label></div>'+
         '<div class="row"><button type="button" id="rangePaint">Set correction</button><button type="button" id="rangeImport">Import mask…</button>'+
-        '<button type="button" id="rangeDelete">Delete correction</button></div>'+
+        '<button type="button" id="rangeDelete">Delete correction</button><button type="button" id="rangeInspect">Inspect tracked mask</button>'+
+        '<button type="button" id="rangePlay">Play tracked range</button></div>'+
         '<p class="note">'+(keys || "No correction frames saved.")+'</p>'+
         '<div class="row"><label class="field">Effect<select id="rangeAction"><option value="recolor">Recolor</option>'+
         '<option value="blur">Blur</option><option value="remove">Remove</option></select></label>'+
@@ -151,6 +266,8 @@
                                             action:draft.action,color:draft.color}));
         }}]);
       by("rangeAction").value=draft.action;by("rangeState").value=draft.state;
+      act("rangeInspect",async()=>{fields();await inspect();});
+      act("rangePlay",async()=>{fields();await play(draft.start);});
       document.querySelectorAll("[data-mask-frame]").forEach(button=>{
         button.onclick=()=>{by("rangeAt").value=button.dataset.maskFrame;};
       });
@@ -169,5 +286,66 @@
     }
     await panel();
   }
-  window.editTools={paint,range,openFrame,oneFrame};
+  async function compare(args) {
+    const review=await ui().api("compare_finish",args);
+    by("player")?.pause();
+    const clip=(id,title,side)=>'<section style="flex:1;min-width:0"><h3>'+title+'</h3>'+
+      '<video id="'+id+'" src="'+ui().esc(side.url)+'" playsinline preload="auto" style="width:100%;display:block"></video>'+
+      '<output id="'+id+'Pos"></output></section>';
+    ui().modal("Compare source and finish",
+      '<div class="row">'+clip("compareLeft","Source",review.source)+clip("compareRight","Finished",review.finished)+'</div>'+
+      '<label class="field">Shared playhead<input id="compareScrub" type="range" min="0" max="'+review.duration+'" step="any" value="0"></label>'+
+      '<div class="row"><button type="button" id="comparePlay">Play both</button><label class="field">Listen to<select id="compareAudio">'+
+      '<option value="source">Source</option><option value="finished">Finished</option><option value="mute">Mute both</option></select></label></div>');
+    const left=by("compareLeft"),right=by("compareRight"),slider=by("compareScrub"),toggle=by("comparePlay");
+    let playing=false,raf=0;
+    const mediaRows=[[left,review.source],[right,review.finished]];
+    function frameAt(side,time) {
+      const runs=side.runs;
+      let lo=0,hi=runs.length;
+      while(lo+1<hi){const mid=(lo+hi)>>1;if(runs[mid][1]<=time+.000001)lo=mid;else hi=mid;}
+      const [index,start,interval,count]=runs[lo];
+      return index+Math.min(count-1,Math.max(0,Math.floor((time-start+.000001)/interval)));
+    }
+    function label(video,side,seconds) {
+      by(video.id+"Pos").textContent="Frame "+frameAt(side,seconds)+" · "+seconds.toFixed(4)+" s";
+    }
+    function align(seconds) {
+      const at=Math.max(0,Math.min(seconds,review.duration));
+      slider.value=at;
+      for(const [video] of mediaRows){if(Math.abs(video.currentTime-at)>.00001)video.currentTime=at;}
+    }
+    function pause() {
+      playing=false;left.pause();right.pause();right.playbackRate=1;
+      cancelAnimationFrame(raf);toggle.textContent="Play both";align(left.currentTime);
+    }
+    function sync(){
+      if(!playing || !left.isConnected)return;
+      slider.value=left.currentTime;
+      if(left.currentTime>=review.duration || left.ended || right.ended){pause();return;}
+      const drift=left.currentTime-right.currentTime;
+      if(!right.seeking && Math.abs(drift)>.048)right.currentTime=left.currentTime;
+      else right.playbackRate=1+Math.max(-.05,Math.min(.05,drift*.9));
+      raf=requestAnimationFrame(sync);
+    }
+    act("comparePlay",async()=>{
+      if(playing){pause();return;}
+      if(left.ended || +slider.value>=review.duration-.00001)align(0);
+      playing=true;toggle.textContent="Pause both";
+      try{await Promise.all([left.play(),right.play()]);sync();}catch(err){pause();throw err;}
+    });
+    slider.oninput=()=>{const at=Number(slider.value);pause();align(at);};
+    const sound=()=>{left.muted=by("compareAudio").value!=="source";right.muted=by("compareAudio").value!=="finished";};
+    by("compareAudio").onchange=sound;sound();
+    for(const [video,side] of mediaRows){
+      label(video,side,0);
+      if(video.requestVideoFrameCallback){
+        const tick=(_,m)=>{if(video.isConnected && by("dialog").open){label(video,side,m.mediaTime);video.requestVideoFrameCallback(tick);}};
+        video.requestVideoFrameCallback(tick);
+      }else video.ontimeupdate=()=>label(video,side,video.currentTime);
+      video.onerror=()=>issue(Error("The comparison preview could not be decoded."));
+    }
+    by("dialog").addEventListener("close",()=>{playing=false;cancelAnimationFrame(raf);left.pause();right.pause();},{once:true});
+  }
+  window.editTools={paint,range,openFrame,oneFrame,compare};
 })();

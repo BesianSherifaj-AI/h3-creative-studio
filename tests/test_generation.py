@@ -197,7 +197,12 @@ def test_mixed_media_guides_new_continued_and_reload(tmp_path, continued):
     bundle = prepare_take(spec, files.__getitem__, client=fake)
     manifest = bundle["manifest"]
     assert [g["retained_frames"] for g in manifest["guides"]] == [1,22,1]
-    assert manifest["guides"][-1]["available_audio_ticks"] == (28 if continued else 8)
+    audio_guide = manifest["guides"][-1]
+    assert audio_guide["available_audio_ticks"] == (28 if continued else 8)
+    stored = fake.uploads[tuple(audio_guide["filename"].rsplit("/", 1))]
+    pcm = subprocess.run(["ffmpeg","-v","error","-i","pipe:0","-f","s16le","pipe:1"],
+                         input=stored, capture_output=True, check=True).stdout
+    assert len(pcm) == 2000 * 2  # At frame 119, exactly 1/24 s remains in the cut.
     for g in manifest["guides"]:
         node = bundle["prompt"][g["node_id"]]["inputs"]
         assert ("audio" in node) == (g["asset_id"] in ("4","sound"))
@@ -271,3 +276,38 @@ def test_lengths_crop_and_audio(overlap):
     assert end["available_audio_ticks"] == (28 if overlap else 8)
     assert end["render_audio_seconds"] == end["available_audio_ticks"] / 40
     assert guide_layout(0,1,duration,[201,100],[100,100])["source_crop_xywh"] == [50,0,101,100]
+
+
+@pytest.mark.parametrize("irregular", [False, True])
+def test_timed_video_is_conformed_by_pts_before_h3_retention(tmp_path, irregular):
+    import numpy as np
+    from h3studio import media
+    from test_media import ff, audio
+    raw, source = tmp_path/"60.mp4", tmp_path/"input.mp4"
+    ff("-f","lavfi","-i","nullsrc=s=64x48:r=60:d=1",
+       "-f","lavfi","-i","sine=frequency=440:sample_rate=48000:duration=1",
+       "-vf","geq=lum=32+3*N:cb=128:cr=128","-c:v","libx264","-crf","0","-c:a","alac",raw)
+    if irregular:
+        ff("-i",raw,"-vf","select='not(between(mod(n,11),4,6))'","-fps_mode","vfr",
+           "-c:v","libx264","-crf","0","-c:a","copy",source)
+    else:
+        source = raw
+    spec, fake, _ = setup_case(tmp_path)
+    fake.schema.update({"LoadVideo":node_schema({"file":[["guide.mp4"]]},["VIDEO"]),
+                        "GetVideoComponents":node_schema({"video":["VIDEO"]},["IMAGE","AUDIO","FLOAT"])})
+    spec.update(duration=3,guides=[dict(asset_id="clip",kind="video",frame=48,with_audio=True)])
+    bundle=prepare_take(spec,lambda _:source,client=fake)
+    g=bundle["manifest"]["guides"][0]
+    assert (g["frame_idx"],g["input_frames"],g["retained_frames"],g["guide_rate"]) == (48,24,22,24)
+    assert g["source_frames"] == len(media.frame_index(source))
+    assert g["source_sha256"] != g["sha256"] and g["delivered_audio_seconds"] == 1
+    prepared=tmp_path/"prepared.mp4"
+    prepared.write_bytes(fake.uploads[tuple(g["filename"].rsplit("/",1))])
+    def means(path):
+        data=ff("-i",path,"-map","0:v:0","-fps_mode","passthrough","-pix_fmt","gray","-f","rawvideo","pipe:1")
+        return np.frombuffer(data,np.uint8).reshape(-1,48,64).mean(axis=(1,2))
+    ticks=media.frame_index(source)
+    expect=[max(i for i,frame in enumerate(ticks) if frame["time_seconds"]<=t/24+1e-8) for t in range(24)]
+    assert np.allclose(means(prepared),means(source)[expect],atol=1)
+    assert np.allclose(audio(prepared,0)[:48000],audio(source,0)[:48000],atol=.0001)
+    assert validate_saved_take(bundle,client=fake)
