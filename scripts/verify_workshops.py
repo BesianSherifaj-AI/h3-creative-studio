@@ -334,6 +334,51 @@ def exercise(page, folder, record=False):
             "assistant_subprocess_reviewed":True,"image_title_x":360}
 
 
+def verify_offline_reader(pw, target):
+    """Play the HTML saved by Studio in a separate browser with networking disabled."""
+    browser = pw.chromium.launch(channel="msedge", headless=True, args=["--disable-gpu", "--mute-audio"])
+    profiles = []
+    try:
+        for width, height in ((390, 844), (1280, 800)):
+            context = browser.new_context(offline=True, viewport={"width": width, "height": height})
+            page = context.new_page()
+            requests, errors = [], []
+            page.on("request", lambda req: requests.append(req.url.split(":")[0]))
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.goto(target.as_uri())
+            heading = page.locator("h1")
+            assert heading.inner_text() == "The night watch"
+            assert page.evaluate("document.documentElement.scrollWidth === innerWidth")
+            images = page.evaluate("""async () => Promise.all(JSON.parse(document.querySelector('#story').textContent)
+                .images.map(async src => {
+                    const im = new Image(); im.src = src; await im.decode();
+                    const cv = document.createElement('canvas'); cv.width = 12; cv.height = 8;
+                    const ctx = cv.getContext('2d'); ctx.drawImage(im, 0, 0, 12, 8);
+                    const pixels = ctx.getImageData(0, 0, 12, 8).data, colors = new Set();
+                    for (let i=0; i<pixels.length; i+=4) colors.add(pixels[i]*65536+pixels[i+1]*256+pixels[i+2]);
+                    return [im.naturalWidth, im.naturalHeight, colors.size];
+                }))""")
+            assert len(images) == 3 and all(w >= 320 and h >= 180 and colors > 12 for w, h, colors in images)
+            path = []
+            for key, scene in (("3", "At the waterline"), ("1", "A light to steer by")):
+                page.keyboard.press(key)
+                assert heading.inner_text() == scene
+                path.append(scene)
+            assert page.locator("#end").inner_text() == "End of this route."
+            page.get_by_role("button", name="Back one turn").click()
+            page.get_by_role("button", name="Shield the lamp and listen").click()
+            assert heading.inner_text() == "The listening post"
+            page.get_by_role("button", name="Replay from opening").click()
+            assert heading.inner_text() == "The night watch" and page.locator("#replay").is_disabled()
+            assert set(requests) <= {"file", "data"} and requests.count("file") == 1 and not errors
+            profiles.append(dict(width=width, height=height, path=path, alternate="The listening post",
+                                 replay=True, images=images, request_schemes=sorted(set(requests))))
+            context.close()
+    finally:
+        browser.close()
+    return profiles
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--exe",type=Path)
@@ -357,6 +402,7 @@ def main():
             page.set_default_timeout(15000)
             try:
                 receipt=exercise(page,folder,args.record)
+                receipt['offline_story_playback'] = verify_offline_reader(pw, folder/'Tidal-Relay.html')
                 assert not errors,errors
             except Exception:
                 page.screenshot(path=folder/"failure.jpg")

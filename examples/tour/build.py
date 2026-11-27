@@ -212,16 +212,19 @@ def build(aspect, tmp, output, captures, named, chapters, ffmpeg, voice):
             encoder.stdin.close()
         if encoder.wait():
             raise RuntimeError("FFmpeg did not finish the picture edit.")
-    duration = sum(frame_count(chapter) for chapter in chapters) / FPS
+    picture_frames = sum(frame_count(chapter) for chapter in chapters)
+    duration = picture_frames / FPS
+    samples = picture_frames * (MIX_RATE // FPS)
     mix = (f"[1:a]highpass=f=65,loudnorm=I=-16:LRA=7:TP=-2,aresample=48000,pan=stereo|c0=c0|c1=c0[v];"
            f"[2:a]atrim=duration={duration},asetpts=PTS-STARTPTS,loudnorm=I=-32:LRA=9:TP=-6,aresample=48000,"
            f"afade=t=out:st={duration-1.2}:d=1.2[m];[v][m]amix=inputs=2:normalize=0:duration=first,"
-           "alimiter=limit=0.9:level=0:latency=1[mix]")
+           "alimiter=limit=0.9:level=0:latency=1,aresample=48000,"
+           f"apad=whole_len={samples},atrim=end_sample={samples},asetpts=N/SR/TB[mix]")
     movie = tmp / f"{STEM}-{aspect}.mp4"
     subprocess.run([ffmpeg, "-v", "error", "-nostdin", "-y", "-i", str(silent), "-i", str(voice),
                     "-stream_loop", "-1", "-i", str(PLATES / "listening-line.m4a"), "-filter_complex", mix,
                     "-map", "0:v", "-map", "[mix]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-                    "-t", str(duration), "-movflags", "+faststart", "-metadata", "title=H3 Creative Studio | Tidal Relay",
+                    "-ar", str(MIX_RATE), "-movie_timescale", str(MIX_RATE), "-movflags", "+faststart", "-metadata", "title=H3 Creative Studio | Tidal Relay",
                     "-metadata", "comment=Native Studio UI, original Tidal Relay score and synthesized narration.",
                     str(movie)], check=True)
     movie.replace(output / movie.name)

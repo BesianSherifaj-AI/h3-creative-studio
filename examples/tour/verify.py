@@ -82,11 +82,40 @@ def inspect_movie(path, aspect, work, chapters, expected, ffmpeg):
             frames += 1
     require(frames == count and len(visited) == len(chapters), f"Truncated picture in {path.name}")
     with av.open(str(path)) as source:
-        samples = sum(frame.samples for frame in source.decode(audio=0))
-    require(abs(samples - frames*(MIX_RATE//FPS)) < 1024, f"Audio length mismatch in {path.name}")
+        audio = source.streams.audio[0]
+        expected_samples = frames * (MIX_RATE // FPS)
+        declared_samples = round(audio.duration * audio.time_base * MIX_RATE)
+        samples = 0
+        for frame in source.decode(audio=0):
+            require(frame.pts is not None and abs(frame.pts * frame.time_base * MIX_RATE - samples) <= 1,
+                    f"Audio discontinuity at sample {samples} in {path.name}")
+            samples += frame.samples
+    with av.open(str(path)) as source:
+        audio = source.streams.audio[0]
+        priming = discard = 0
+        first_pts = last_end = None
+        for packet in source.demux(audio):
+            if packet.pts is None:
+                continue
+            if first_pts is None:
+                first_pts = packet.pts
+            last_end = packet.pts + packet.duration
+            for side in packet.iter_sidedata():
+                if side.data_type == "skip_samples":
+                    data = bytes(side)
+                    priming += int.from_bytes(data[:4], "little")
+                    discard += int.from_bytes(data[4:8], "little")
+        timing = dict(expected_samples=expected_samples, presented_samples=declared_samples, decoded_samples=samples,
+                      stream_start_pts=audio.start_time, stream_duration=audio.duration, time_base=str(audio.time_base),
+                      first_packet_pts=first_pts, last_packet_end_pts=last_end, skip_samples=priming,
+                      discard_samples=discard, decoded_tail_padding=samples-declared_samples)
+    print(path.name, json.dumps(timing), flush=True)
+    require(abs(declared_samples - expected_samples) <= 1 and abs(samples - expected_samples) < 1024,
+            f"Audio length mismatch in {path.name}: expected {expected_samples}, "
+            f"stream declares {declared_samples}, decoded {samples}.")
     lufs, peak = loudness(ffmpeg, path)
     sheet.save(work / f"review-{aspect}.jpg", quality=92)
-    return {"size": size, "frames":frames, "seconds":frames/FPS, "audio_samples":samples,
+    return {"size": size, "frames":frames, "seconds":frames/FPS, "audio_samples":samples, "declared_audio_samples":declared_samples, "audio_timing":timing,
             "lufs":lufs, "true_peak":peak, "sha256":sha256(path)}
 
 
@@ -105,9 +134,15 @@ def main():
     with tempfile.TemporaryDirectory(dir=args.output) as folder:
         work = Path(folder)
         receipt = {"caption_cues": cues}
+        failures = {}
         for aspect in SIZES:
             path = args.output / f"{STEM}-{aspect}.mp4"
-            receipt[aspect] = inspect_movie(path, aspect, work, chapters, expected, ffmpeg)
+            try:
+                receipt[aspect] = inspect_movie(path, aspect, work, chapters, expected, ffmpeg)
+            except (OSError, ValueError, subprocess.CalledProcessError) as error:
+                failures[aspect] = str(error)
+        if failures:
+            raise ValueError(json.dumps(failures))
         report = work / "tour-verified.json"
         report.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
         for file in work.iterdir():
